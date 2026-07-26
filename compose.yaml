@@ -1,0 +1,26 @@
+services:
+  phase0-fixture:
+    build:
+      context: ./targets/phase0_fixture
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=1)"
+      interval: 2s
+      timeout: 1s
+      retries: 10
+    networks:
+      - isolated
+
+networks:
+  isolated:
+    internal: true

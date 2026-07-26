@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0.0",
+  "responses": [
+    {
+      "schema_version": "1.0.0",
+      "model": "offline-model",
+      "profile": "deterministic",
+      "request_digest": "e9b98aac76c44d12f96da1af4850afd3785d2e1d0030eb360d9348241729bef4",
+      "response": "Synthetic offline response.",
+      "input_tokens": 4,
+      "output_tokens": 4
+    }
+  ]
+}
