@@ -29,3 +29,9 @@ fixture-check:
 
 fixture-down:
 	docker compose down --remove-orphans
+
+.PHONY: phase1-check phase1-demo
+phase1-check: lint typecheck test
+
+phase1-demo:
+	uv run purpleloop phase1-demo

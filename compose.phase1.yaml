@@ -1,0 +1,43 @@
+services:
+  phase1-fixture:
+    image: purpleloop-phase1-fixture
+    build:
+      context: .
+      dockerfile: targets/phase1_fixture/Dockerfile
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      PURPLELOOP_CUSTOMER_CREDENTIAL: ${PURPLELOOP_CUSTOMER_CREDENTIAL:?required}
+      PURPLELOOP_CONTROL_CREDENTIAL: ${PURPLELOOP_CONTROL_CREDENTIAL:?required}
+    networks: [phase1-isolated]
+    healthcheck:
+      test: [CMD, /app/.venv/bin/python, -c, "import socket; socket.create_connection(('127.0.0.1',8080),1).close(); socket.create_connection(('127.0.0.1',8081),1).close()"]
+      interval: 1s
+      timeout: 2s
+      retries: 20
+  phase1-ingress:
+    image: purpleloop-phase1-fixture
+    command: [/app/.venv/bin/python, -m, purpleloop.fixture.relay]
+    read_only: true
+    tmpfs: ["/tmp:size=8m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ports:
+      - "127.0.0.1:18080:8080"
+      - "127.0.0.1:18081:8081"
+    networks: [phase1-isolated, ingress]
+    healthcheck:
+      test: [CMD, /app/.venv/bin/python, -c, "import socket; socket.create_connection(('127.0.0.1',8080),1).close(); socket.create_connection(('127.0.0.1',8081),1).close()"]
+      interval: 1s
+      timeout: 2s
+      retries: 20
+    depends_on:
+      phase1-fixture:
+        condition: service_healthy
+networks:
+  ingress: {}
+  phase1-isolated:
+    internal: true

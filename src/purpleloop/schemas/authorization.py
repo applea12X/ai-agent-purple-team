@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from ipaddress import IPv4Address, IPv6Address
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
@@ -98,8 +99,15 @@ class BudgetLimits(StrictModel):
     wall_time_seconds: float = Field(default=60.0, gt=0)
 
 
+class Phase1Grants(StrictModel):
+    max_nodes: int = Field(default=64, ge=1, le=256)
+    max_depth: int = Field(default=16, ge=1, le=64)
+    defense_profiles: frozenset[str]
+
+
 class AuthorizationManifest(StrictModel):
-    schema_version: str = "1.0.0"
+    schema_version: Literal["1.0.0", "1.1.0"] = "1.0.0"
+    phase1: Phase1Grants | None = None
     engagement_id: str
     owner: str
     approvers: tuple[str, ...]
@@ -185,8 +193,23 @@ class AuthorizationManifest(StrictModel):
             raise ValueError("manifest cannot be issued after it becomes valid")
         if self.denied_operations & self.allowed_operations:
             raise ValueError("an operation cannot be both allowed and denied")
-        if self.allowed_side_effects != frozenset({SideEffectClass.READ}):
+        if self.schema_version == "1.0.0" and (
+            self.allowed_side_effects != frozenset({SideEffectClass.READ})
+            or self.phase1 is not None
+        ):
             raise ValueError("Phase 0 permits read-only effects only")
+        if SideEffectClass.DESTRUCTIVE in self.allowed_side_effects:
+            raise ValueError("destructive actions are forbidden")
+        if self.schema_version == "1.1.0" and (
+            self.phase1 is None or self.data_classification != "synthetic"
+        ):
+            raise ValueError("Phase 1 requires explicit grants and synthetic data")
+        if self.schema_version == "1.1.0" and any(
+            asset.host != "127.0.0.1" or asset.scheme != "http" for asset in self.assets
+        ):
+            raise ValueError("Phase 1 assets must be exact loopback HTTP fixtures")
+        if self.schema_version == "1.1.0" and self.synthetic_secrets:
+            raise ValueError("Phase 1 secrets belong in the broker, not the exported manifest")
         if set(self.credential_scopes) != set(self.credential_handles):
             raise ValueError("every credential handle requires one exact scope")
         if any(not operations for operations in self.credential_scopes.values()):

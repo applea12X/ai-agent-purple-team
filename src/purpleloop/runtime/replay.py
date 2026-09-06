@@ -14,6 +14,19 @@ class ReplaySummary(StrictModel):
 
 def replay_fingerprint(events: Sequence[EvidenceEvent]) -> str:
     normalized: list[dict[str, Any]] = []
+    references = {
+        event.event_hash: f"event:{event.sequence}" for event in events if event.event_hash
+    }
+
+    def normalize_references(value: Any) -> Any:
+        if isinstance(value, str):
+            return references.get(value, value)
+        if isinstance(value, dict):
+            return {key: normalize_references(item) for key, item in value.items()}
+        if isinstance(value, (tuple, list)):
+            return [normalize_references(item) for item in value]
+        return value
+
     for event in events:
         payload = event.model_dump(
             mode="json",
@@ -23,7 +36,9 @@ def replay_fingerprint(events: Sequence[EvidenceEvent]) -> str:
         data = payload.get("data")
         if isinstance(data, dict):
             data.pop("latency_ms", None)
-        normalized.append(payload)
+        normalized.append(
+            normalize_references(payload) if event.schema_version == "1.1.0" else payload
+        )
     return digest_data(normalized)
 
 

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from enum import StrEnum
 from ipaddress import IPv4Address, IPv6Address
+from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, JsonValue, field_validator, model_validator
 
 from purpleloop.schemas.common import StrictModel, require_identifier
 
@@ -61,6 +62,8 @@ class BudgetRequest(StrictModel):
 
 
 class ActionRequest(StrictModel):
+    schema_version: Literal["1.0.0", "1.1.0"] | None = None
+    arguments: dict[str, JsonValue] | None = None
     action_id: str
     adapter: str
     operation: str
@@ -85,12 +88,19 @@ class ActionRequest(StrictModel):
     @classmethod
     def normalize_method(cls, value: str) -> str:
         method = value.upper()
-        if method not in {"GET", "HEAD", "OPTIONS"}:
-            raise ValueError("Phase 0 permits read-only HTTP methods")
+        if method not in {"GET", "HEAD", "OPTIONS", "POST", "PATCH", "PUT"}:
+            raise ValueError("unsupported HTTP method")
         return method
 
     @model_validator(mode="after")
     def enforce_read_only(self) -> ActionRequest:
-        if self.side_effect != SideEffectClass.READ or self.budget.writes:
+        if self.side_effect == SideEffectClass.DESTRUCTIVE:
+            raise ValueError("destructive actions are forbidden")
+        if self.schema_version != "1.1.0" and (
+            self.side_effect != SideEffectClass.READ
+            or self.budget.writes
+            or self.method not in {"GET", "HEAD", "OPTIONS"}
+            or self.arguments is not None
+        ):
             raise ValueError("Phase 0 actions must be read-only")
         return self

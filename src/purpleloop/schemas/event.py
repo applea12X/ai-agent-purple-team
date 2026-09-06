@@ -10,6 +10,10 @@ from purpleloop.schemas.common import StrictModel, require_identifier, require_u
 
 
 class EventKind(StrEnum):
+    LIFECYCLE = "lifecycle"
+    ORACLE = "oracle"
+    DETECTOR = "detector"
+    DEFENSE = "defense"
     ADMISSION = "admission"
     POLICY = "policy"
     BUDGET = "budget"
@@ -19,6 +23,13 @@ class EventKind(StrEnum):
 
 
 class EvidenceEvent(StrictModel):
+    schema_version: str | None = None
+    scenario_id: str | None = None
+    scenario_version: str | None = None
+    stage: str | None = None
+    component_version: str | None = None
+    oracle_version: str | None = None
+    snapshot_hash: str | None = None
     run_id: str
     trace_id: str
     sequence: int = Field(ge=0)

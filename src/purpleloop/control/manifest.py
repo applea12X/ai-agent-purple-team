@@ -9,6 +9,7 @@ from typing import Any, Protocol
 import yaml
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from pydantic import ValidationError
 
 from purpleloop.schemas.authorization import AuthorizationManifest
@@ -49,6 +50,11 @@ class ManifestVerifier:
     ) -> None:
         self._public_keys = dict(public_keys)
         self._revocations = revocations or InMemoryRevocationProvider(revoked_digests)
+
+    def public_key_bytes(self, key_id: str) -> bytes:
+        return self._public_keys[key_id].public_bytes(
+            Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
+        )
 
     def verify(
         self, manifest: AuthorizationManifest, *, now: datetime | None = None

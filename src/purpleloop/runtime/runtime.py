@@ -70,6 +70,9 @@ class SafetyRuntime:
         self.adapter = adapter
         self.ledger = ledger
         self.clock = clock or (lambda: datetime.now(UTC))
+        self.scenario_id: str | None = None
+        self.scenario_version: str | None = None
+        self.stage: str | None = None
 
     async def run(
         self,
@@ -114,6 +117,7 @@ class SafetyRuntime:
             action_digest,
             decision.effect,
             decision.reason_code,
+            {"arguments": action.arguments} if action.arguments is not None else None,
             redactor=effective_redactor,
         )
         event_hashes.append(policy_event.event_hash or "")
@@ -191,11 +195,14 @@ class SafetyRuntime:
             )
             if credential is not None:
                 effective_redactor = self.redactor.with_secrets((credential,))
-            return await self.adapter.execute(
+            adapter_result = await self.adapter.execute(
                 action,
                 credential=credential,
                 authorize_target=authorize_target,
             )
+            if not await self.adapter.postcondition(action, adapter_result):
+                raise RuntimeError("adapter postcondition failed")
+            return adapter_result
 
         try:
             remaining = self.budgets.remaining_wall_time
@@ -204,8 +211,6 @@ class SafetyRuntime:
             task = await self.kill_switch.spawn(adapter_activity)
             async with asyncio.timeout(remaining):
                 adapter_result = cast(AdapterResult, await task)
-            if not await self.adapter.postcondition(action, adapter_result):
-                raise RuntimeError("adapter postcondition failed")
             safe_result = adapter_result.model_copy(
                 update={"data": effective_redactor.redact(adapter_result.data)}
             )
@@ -218,7 +223,11 @@ class SafetyRuntime:
                 action_digest,
                 "permit",
                 "COMPLETED",
-                {"status": safe_result.status, "data": safe_result.data},
+                {
+                    "status": safe_result.status,
+                    "data": safe_result.data,
+                    **({"latency_ms": safe_result.latency_ms} if self.scenario_id else {}),
+                },
                 redactor=effective_redactor,
             )
             event_hashes.append(event.event_hash or "")
@@ -309,6 +318,11 @@ class SafetyRuntime:
         redactor: Redactor,
     ) -> EvidenceEvent:
         event = EvidenceEvent(
+            schema_version="1.1.0" if self.scenario_id else None,
+            scenario_id=self.scenario_id,
+            scenario_version=self.scenario_version,
+            stage=self.stage,
+            component_version="runtime-v1" if self.scenario_id else None,
             run_id=run_id,
             trace_id=trace_id,
             sequence=0,

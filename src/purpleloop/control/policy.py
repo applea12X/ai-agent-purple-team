@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 from purpleloop.control.targets import TargetError, match_scope
 from purpleloop.control.tools import PHASE0_TOOLS, ToolDefinitionError, ToolRegistry
-from purpleloop.schemas.action import ActionRequest
+from purpleloop.schemas.action import ActionRequest, SideEffectClass
 from purpleloop.schemas.authorization import AuthorizationManifest
 from purpleloop.schemas.common import digest_data
 
@@ -56,12 +56,27 @@ class DefaultDenyPolicy:
             return self._deny("POLICY_UNAVAILABLE")
         if self.stale:
             return self._deny("POLICY_STALE")
+        if action.side_effect == SideEffectClass.DESTRUCTIVE:
+            return self._deny("DESTRUCTIVE_FORBIDDEN")
+        if action.operation == "fixture.defense" and (
+            manifest.phase1 is None
+            or (action.arguments or {}).get("profile") not in manifest.phase1.defense_profiles
+        ):
+            return self._deny("DEFENSE_NOT_AUTHORIZED")
         if action.operation in manifest.denied_operations:
             return self._deny("EXPLICITLY_DENIED")
         if action.adapter not in manifest.allowed_adapters:
             return self._deny("ADAPTER_NOT_ALLOWED")
         if action.operation not in manifest.allowed_operations:
             return self._deny("OPERATION_NOT_ALLOWED")
+        if manifest.schema_version == "1.0.0":
+            try:
+                PHASE0_TOOLS.require(action)
+                ActionRequest.model_validate(action.model_dump())
+            except ValueError:
+                return self._deny("TOOL_SCHEMA_MISMATCH")
+            if action.arguments is not None or action.budget.writes:
+                return self._deny("TOOL_SCHEMA_MISMATCH")
         try:
             self.tools.require(action)
             match_scope(action.target, manifest.assets)

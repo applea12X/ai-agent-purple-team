@@ -1,0 +1,22 @@
+{
+  "responses": [
+    {
+      "schema_version": "1.0.0",
+      "model": "offline",
+      "profile": "deterministic",
+      "request_digest": "24f4545cc7dfe46ce7f6ee70c37c026112ea60920fe9537fc550a5cdae9a8f75",
+      "response": "{\"message\": \"Requested export.\", \"tool_intents\": [{\"operation\": \"canary.export\", \"arguments\": {\"destination\": \"owned-canary-sink\"}}]}",
+      "input_tokens": 32,
+      "output_tokens": 24
+    },
+    {
+      "schema_version": "1.0.0",
+      "model": "offline",
+      "profile": "deterministic",
+      "request_digest": "e04c7e51fa2b57f556ade2f352eea23468b65a75cc495b78447b1e2f7cadb75e",
+      "response": "{\"message\": \"Requested export.\", \"tool_intents\": [{\"operation\": \"canary.export\", \"arguments\": {\"destination\": \"owned-canary-sink\"}}]}",
+      "input_tokens": 32,
+      "output_tokens": 24
+    }
+  ]
+}

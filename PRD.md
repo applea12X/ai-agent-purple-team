@@ -254,19 +254,187 @@ Checkpoint:
 
 ### Phase 1 — Deterministic closed-loop MVP (weeks 4–7)
 
-Deliver:
+#### Objective and verified starting point
 
-- Runtime state machine: provision → seed → clean task → attack → score → detect → select defense → reset → replay → teardown.
-- Inspect bridge, chat/tool/HTTP drivers, state oracle, evidence bundles, JUnit/SARIF/static report.
-- Five deterministic scenarios with seeded vulnerabilities and typed defenses.
+Turn the Phase 0 single-action safety kernel into a deterministic, fixture-only purple-team loop:
 
-Checkpoint:
+`provision → seed → clean task → baseline attack → score → detect → select defense → reset → replay → teardown`
 
-- Zero unauthorized harness side effects across the integration suite.
-- At least 95% exact replay on deterministic fixtures.
-- At least 90% seeded-finding recall and at most 5% reviewed false positives.
-- Failed and cancelled runs always teardown and preserve evidence.
-- One command produces a complete report without cloud credentials.
+The implementation starts from commit `17dd1bf`, where all 57 tests pass with 87% branch
+coverage. Phase 0 already provides canonical signed authorization, revocation and validity checks,
+a default-deny policy, exact target and tool binding, atomic budgets, cancellation, opaque credential
+handling, redaction, guarded mock execution, a hash-chained evidence ledger, semantic replay hashes,
+offline model fixtures, CLI commands, and an isolated read-only Compose fixture. Phase 1 must extend
+these controls rather than replace or bypass them.
+
+`SafetyRuntime` remains the trusted per-action enforcement boundary. A new `PurpleTeamRunner`
+coordinates the complete lifecycle and submits every target-facing action—including tool intents
+produced by chat output—through `SafetyRuntime`. One run shares a budget ledger, kill switch,
+credential broker, redactor, adapter registry, and evidence ledger.
+
+#### Contracts and backward compatibility
+
+- Add strict models for lifecycle state, plan nodes and execution plans, oracle results, detector
+  results, defense selections, findings, and run summaries. All canonical objects receive stable
+  schema versions and SHA-256 digests.
+- Compile scenario steps into a typed directed acyclic graph before provisioning. Reject duplicate
+  node IDs, cycles, unknown adapters or operations, dependency references that do not exist,
+  tenant mismatches, and plans exceeding the manifest's node or depth limits. Planner output is
+  untrusted data and cannot contain arbitrary Python, shell, URLs, or browser instructions.
+- Introduce Scenario schema 1.1 with separate clean-task and attack steps; typed actors, roles,
+  credential handles, and target tenants; typed security and utility oracle specifications;
+  expected telemetry; reset details; and a registered defense profile. Load existing Scenario 1.0
+  documents only through an explicit, tested conversion into the 1.1 internal representation.
+- Extend `ActionRequest` with optional typed arguments and registered write methods. Arguments are
+  included in the action digest and redacted before evidence is written. Each operation's trusted
+  tool definition owns its exact method, effect, path, argument schema, result schema, and
+  idempotency requirements.
+- Version authorization behavior without weakening Phase 0. Manifest 1.0 remains read-only and
+  accepts only its existing registered tools. Manifest 1.1 may explicitly grant `READ` and `WRITE`
+  for exact synthetic fixture operations and credential scopes. `DESTRUCTIVE` actions, unknown
+  operations, unregistered argument shapes, and targets outside exact signed scope remain denied.
+- Add an adapter registry keyed by exact adapter and operation names. Registration is immutable
+  after admission, duplicate keys fail startup, and an adapter cannot select another adapter or
+  execute an action outside the safety runtime.
+- Extend new evidence events with scenario ID and version, lifecycle stage, component and oracle
+  versions, snapshot hashes, detector and oracle results, and redacted artifact pointers. Keep
+  existing fields optional where necessary so Phase 0 ledgers remain readable and verifiable.
+
+#### Deterministic fixture and drivers
+
+- Add a separate Phase 1 fixture rather than relaxing `targets/phase0_fixture`. Its container has a
+  read-only root filesystem, tmpfs-backed mutable state, dropped capabilities,
+  `no-new-privileges`, loopback-bound data and control ports, and no external egress.
+- Give the fixture an authenticated, separately scoped control plane for provision, seed,
+  snapshot, telemetry read, defense application, reset, and teardown. Attack credentials cannot
+  address this plane. Seed and reset return canonical state hashes that the runner verifies before
+  each paired execution.
+- Make fixture behavior reproducible with a seeded generator, injected logical clock, deterministic
+  identifiers, stable response ordering, and no wall-clock or random values in scored output.
+- Implement an async HTTP adapter with explicit DNS observations, authorization before every
+  connection, manual redirect handling, strict request and wall-time deadlines, bounded response
+  sizes, and automatic redirects disabled.
+- Implement a typed tool adapter that validates registered input and output schemas and enforces
+  idempotency keys. Duplicate writes return the original outcome and do not repeat their effect.
+- Implement a chat adapter backed only by exact `OfflineModelStore` responses. A fixture miss fails
+  closed. Model-produced tool intents are parsed as untrusted data, compiled into typed actions,
+  and sent through `SafetyRuntime`; the chat adapter never invokes tools itself.
+- Implement a fixture controller whose `finally` path always requests teardown, records the
+  outcome, flushes evidence, and preserves partial run artifacts after success, denial, exception,
+  timeout, budget exhaustion, or cancellation.
+
+#### Closed-loop scoring, detection, and defense
+
+- Implement deterministic state oracles with a closed operator set: equality, existence,
+  containment, count comparison, and before/after state delta. Paths and expected values are typed;
+  arbitrary expressions and code evaluation are forbidden.
+- Score clean utility before attack and after mitigation. Record attack susceptibility separately
+  from executed unauthorized side effects, and credit a defense only when the seeded attack
+  succeeds in the baseline leg and fails under the same seed, plan, and budget after mitigation.
+- Implement structured detector rules over fixture audit telemetry and kernel events. Each result
+  includes the matched rule, supporting event IDs, expected/observed status, and time-to-detect
+  measured from the first attack action.
+- Select defenses exclusively from a versioned registry. A profile declares applicable scenario
+  IDs, the exact fixture configuration mutation, verification checks, and rollback behavior. The
+  signed manifest must pre-authorize the selected profile; Phase 1 never edits application source
+  or accepts a free-form remediation.
+- Produce a typed finding only from state deltas, canary exposure, policy decisions, or tool traces.
+  Each finding carries the scoped asset, attacker goal, observed impact, evidence links,
+  reproducibility, confidence, severity rationale, taxonomy mappings, oracle version, and status.
+
+Harness authorization and target vulnerability are independent facts. The signed manifest may
+authorize the harness to exercise a synthetic fixture operation while the state oracle classifies
+the fixture application's response as an authorization failure. A permitted harness action is
+never, by itself, evidence that an attack failed.
+
+#### Five-scenario deterministic corpus
+
+Create five versioned offline scenarios. Each contains a vulnerable seed, clean utility task,
+baseline attack, positive control, clean or defended negative control, deterministic state oracle,
+expected detector behavior, and one pre-approved defense:
+
+1. A customer reads another tenant's object; enforce tenant ownership before object retrieval.
+2. A customer updates a protected property through mass assignment; restrict writes to an exact
+   role-specific field allowlist.
+3. A customer creates a synthetic refund without verified approval; require and validate an
+   approval record before the refund state transition.
+4. A direct chat injection produces a canary-export tool intent; apply a capability guard that
+   rejects exports outside the legitimate task's declared capability set.
+5. Retrieved fixture content contains an indirect injection that produces a canary-export intent;
+   treat retrieved instructions as untrusted data and apply the same capability boundary before
+   tool execution.
+
+Ground-truth labels identify every expected seeded finding and negative control so recall and
+false-positive rates are calculated from explicit cases rather than inferred from scenario-level
+success.
+
+#### Inspect bridge, evidence bundle, and public commands
+
+- Add Inspect AI as a pinned evaluation and log bridge while keeping PurpleLoop scenarios, plans,
+  policy decisions, evidence, oracle verdicts, and summaries canonical.
+- Convert scenarios into Inspect `MemoryDataset` samples. A custom solver invokes
+  `PurpleTeamRunner`; a deterministic scorer translates PurpleLoop oracle results into Inspect
+  scores and includes evidence references.
+- Register a `purpleloop/offline` Inspect model provider backed by `OfflineModelStore`. Exact
+  request/model/profile mismatches fail closed and there is no network fallback or cloud credential
+  requirement.
+- Add `validate-scenario`, `run-scenario`, and `verify-bundle` to the CLI without changing the
+  behavior or arguments of existing Phase 0 commands.
+- Add `make phase1-demo` as the single offline entry point. It provisions the Phase 1 fixture,
+  executes all five scenarios, writes and verifies reports, and tears down the fixture even when
+  the command fails.
+- Emit a self-contained run directory containing normalized manifest and scenario inputs, compiled
+  plans, the evidence ledger and anchor, before/after snapshots, Inspect logs, canonical result
+  JSON, JUnit XML, SARIF 2.1.0, static HTML, and a SHA-256 artifact inventory. Bundle verification
+  checks every digest, ledger link, required artifact, and referenced evidence ID.
+- JUnit contains one test case per scenario: a security regression is a failure, harness/runtime
+  malfunction is an error, and an inconclusive oracle is skipped. SARIF contains one result per
+  seeded baseline finding with risk mapping, mitigation, and evidence references. The offline HTML
+  report shows clean utility, baseline attack and side effects, detection, selected defense,
+  replay result, utility regression, budget/resource use, and redacted evidence links.
+
+#### Four-week delivery sequence
+
+- **Week 4 — Contracts and orchestration:** implement versioned schema compatibility, the plan
+  compiler, adapter registry, `PurpleTeamRunner`, shared run controls, and lifecycle evidence.
+- **Week 5 — Fixture and evaluation logic:** implement the isolated fixture, control plane,
+  HTTP/tool/chat drivers, state snapshots, five scenarios, deterministic oracles, detectors, and
+  the defense registry.
+- **Week 6 — Evaluation and reporting:** implement the Inspect bridge and offline provider,
+  evidence bundles, JUnit/SARIF/HTML generation, CLI workflow, and `phase1-demo` command.
+- **Week 7 — Hardening and acceptance:** complete replay, property, contract, fault-injection, and
+  end-to-end tests; add a separate Phase 1 CI lane; update operating documentation; and record
+  measured acceptance evidence. The existing Phase 0 CI lane remains unchanged.
+
+#### Test plan and acceptance checkpoint
+
+- Unit-test version conversion, strict schemas, plan compilation and cycle rejection, adapter
+  dispatch, oracle operators, detector metrics, defense applicability, report serialization, and
+  artifact inventory verification.
+- Property-test mutations of host, tenant, resource, method, arguments, redirects, and side-effect
+  class. Every unauthorized mutation must be denied before adapter I/O.
+- Run a shared adapter contract suite covering typed inputs and outputs, DNS and redirect
+  authorization, deadlines, cancellation, idempotency, redaction, postconditions, bounded output,
+  and absence of hidden network fallback.
+- Integration-test all five baseline/defense/replay loops with identical seed hashes, valid evidence
+  chains, bounded shared budgets, passing clean tasks, and independently recorded harness policy and
+  application security outcomes.
+- Inject failure and cancellation at every lifecycle stage. Each case must tear down, append a
+  termination outcome when the ledger is writable, and leave a verifiable evidence bundle or an
+  explicit evidence-integrity incident.
+- Run 100 deterministic replay trials—20 per scenario—and require at least 95 matching normalized
+  event and oracle hashes. Report every mismatch rather than excluding it.
+- Detect all five seeded vulnerable cases and allow no more than one reviewed false positive across
+  20 clean or defended negative-control executions. This exceeds the Phase 1 thresholds of at
+  least 90% seeded-finding recall and at most 5% false positives.
+- Preserve the 85% branch-coverage floor and keep all 57 Phase 0 regression tests passing.
+- Block Phase 1 acceptance unless the integration suite observes zero unauthorized harness side
+  effects, failed and cancelled runs preserve evidence and teardown, and `make phase1-demo`
+  produces and verifies a complete report without cloud credentials.
+
+Phase 1 remains local/CI-only and deterministic. Real models, browser automation, the realistic
+`supportlab` application, PostgreSQL, adaptive attackers, LLM judges, third-party attack imports,
+and autonomous source remediation remain assigned to later phases.
 
 ### Phase 2 — Realistic SaaS and browser lane (weeks 8–12)
 

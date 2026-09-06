@@ -24,7 +24,14 @@ class Redactor:
             return result
         if isinstance(value, Mapping):
             return {
-                str(key): REDACTED if SENSITIVE_KEY.search(str(key)) else self.redact(item)
+                str(key): (
+                    item
+                    if key in {"tokens", "tokens_used", "input_tokens", "output_tokens"}
+                    and isinstance(item, int)
+                    else REDACTED
+                    if SENSITIVE_KEY.search(str(key))
+                    else self.redact(item)
+                )
                 for key, item in value.items()
             }
         if isinstance(value, tuple):
