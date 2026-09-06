@@ -234,267 +234,373 @@ Results must be shown per risk class with worst cases, repetitions, uncertainty/
 
 ## 8. Phased implementation and checkpoints
 
-### Phase 0 — Foundation and safety kernel (weeks 1–3)
+### Delivery model
 
-Deliver:
+Phases are work packages gated by acceptance evidence, not calendar weeks. The original week
+ranges are retained only as coarse effort estimates for a part-time build; the real gate is a
+written acceptance record in `docs/` in which every number came from a command that was actually
+run. Phases 0 and 1 each landed in a single concentrated implementation pass rather than the
+three and four weeks originally budgeted, so sequencing below is expressed as work packages
+(`WP<phase>.<n>`) that can be picked up in order.
 
-- Repository, packaging, lint/type/test tooling, architecture decisions, and threat model.
-- Authorization and scenario schemas.
-- CLI skeleton and mock read-only adapters.
-- Policy engine, budget ledger, kill switch, and hash-chained event ledger.
-- Minimal Compose test service and offline model-response fixtures.
+Rules that held for Phases 0 and 1 and continue to bind every later phase:
 
-Checkpoint:
+- A phase closes only when `docs/phase<N>-acceptance.md` records measured results, the defects
+  found during acceptance, and honest known limits. A successful implementation is not evidence.
+- Each phase extends the safety kernel; it never relaxes an earlier control to make new work
+  easier. A new surface gets a new fixture and a new CI lane, and every earlier lane stays green
+  and unchanged.
+- Every new metric ships with a test that fails when the metric is faked. `corpus_metrics` is the
+  reference: injected suppression must drop recall, and a finding in a defended negative control
+  must count as a false positive.
+- Numeric targets are engineering thresholds. Measured results are reported whether they exceed
+  or miss the threshold, and mismatches are never excluded from a denominator.
+- Anything that cannot be made deterministic is labelled as such at the point it is reported,
+  rather than being presented alongside deterministic numbers without distinction.
 
-- All mutated out-of-scope host, tenant, redirect, DNS, and action cases are denied.
-- Policy outage, invalid signature, expiration, revocation, or ambiguity fails closed.
-- Kill-switch p99 is at most two seconds in fault-injection tests.
-- No plaintext fixture secrets enter logs or model context.
-- Replaying mock traces yields identical event and score hashes.
+### Phase 0 — Foundation and safety kernel — complete (`17dd1bf`, 2026-07-25)
 
-### Phase 1 — Deterministic closed-loop MVP (weeks 4–7)
+Delivered as specified: packaging and lint/type/test tooling, architecture and threat-model docs,
+authorization and scenario schemas, CLI skeleton with mock read-only adapters, policy engine,
+budget ledger, kill switch, hash-chained event ledger, an isolated read-only Compose fixture, and
+offline model-response fixtures.
 
-#### Objective and verified starting point
+Checkpoint — measured, recorded in `docs/phase0-acceptance.md`:
 
-Turn the Phase 0 single-action safety kernel into a deterministic, fixture-only purple-team loop:
+- 57 tests passed; 87.00% branch-aware coverage against an 85% floor.
+- Kill-switch p99 0.654 ms over 1,000 independent trials against a 2,000 ms ceiling, counting
+  only trials where adapter activity had started.
+- Mutated out-of-scope host, tenant, redirect, DNS, and action cases denied; policy outage,
+  invalid signature, expiry, revocation, and ambiguity fail closed.
+- Canary, resolved-credential, bearer-header, and exception-contained secrets absent from runtime
+  results and evidence.
+- Replayed mock traces produce identical semantic event and score hashes.
+- Container ran unprivileged with dropped capabilities, read-only root, `no-new-privileges`, and
+  an internal-only network; teardown removed the container and network.
+
+### Phase 1 — Deterministic closed-loop MVP — complete (`fb3001a`, `ecf1ada`, 2026-09-06)
+
+The Phase 0 single-action kernel became a full fixture-only loop:
 
 `provision → seed → clean task → baseline attack → score → detect → select defense → reset → replay → teardown`
 
-The implementation starts from commit `17dd1bf`, where all 57 tests pass with 87% branch
-coverage. Phase 0 already provides canonical signed authorization, revocation and validity checks,
-a default-deny policy, exact target and tool binding, atomic budgets, cancellation, opaque credential
-handling, redaction, guarded mock execution, a hash-chained evidence ledger, semantic replay hashes,
-offline model fixtures, CLI commands, and an isolated read-only Compose fixture. Phase 1 must extend
-these controls rather than replace or bypass them.
+The implemented design is documented in `docs/phase1-plan.md`; the measured results are in
+`docs/phase1-acceptance.md`. Both are authoritative over the pre-implementation task list that
+this section previously carried.
 
-`SafetyRuntime` remains the trusted per-action enforcement boundary. A new `PurpleTeamRunner`
-coordinates the complete lifecycle and submits every target-facing action—including tool intents
-produced by chat output—through `SafetyRuntime`. One run shares a budget ledger, kill switch,
-credential broker, redactor, adapter registry, and evidence ledger.
+Shipped: versioned strict contracts with SHA-256 digests, a typed plan compiler, an immutable
+adapter registry, `PurpleTeamRunner` over a shared budget ledger / kill switch / credential broker
+/ redactor / evidence ledger, a containerised deterministic FastAPI fixture with a separately
+scoped control plane, HTTP / tool / chat adapters, closed-operator state oracles, structured
+detectors, a versioned defense registry, a five-scenario labelled corpus, the Inspect bridge and
+`purpleloop/offline` provider, the self-verifying evidence bundle with JUnit / SARIF / HTML, and
+the `validate-scenario`, `run-scenario`, `verify-bundle`, and `phase1-demo` commands.
 
-#### Contracts and backward compatibility
+Checkpoint — measured:
 
-- Add strict models for lifecycle state, plan nodes and execution plans, oracle results, detector
-  results, defense selections, findings, and run summaries. All canonical objects receive stable
-  schema versions and SHA-256 digests.
-- Compile scenario steps into a typed directed acyclic graph before provisioning. Reject duplicate
-  node IDs, cycles, unknown adapters or operations, dependency references that do not exist,
-  tenant mismatches, and plans exceeding the manifest's node or depth limits. Planner output is
-  untrusted data and cannot contain arbitrary Python, shell, URLs, or browser instructions.
-- Introduce Scenario schema 1.1 with separate clean-task and attack steps; typed actors, roles,
-  credential handles, and target tenants; typed security and utility oracle specifications;
-  expected telemetry; reset details; and a registered defense profile. Load existing Scenario 1.0
-  documents only through an explicit, tested conversion into the 1.1 internal representation.
-- Extend `ActionRequest` with optional typed arguments and registered write methods. Arguments are
-  included in the action digest and redacted before evidence is written. Each operation's trusted
-  tool definition owns its exact method, effect, path, argument schema, result schema, and
-  idempotency requirements.
-- Version authorization behavior without weakening Phase 0. Manifest 1.0 remains read-only and
-  accepts only its existing registered tools. Manifest 1.1 may explicitly grant `READ` and `WRITE`
-  for exact synthetic fixture operations and credential scopes. `DESTRUCTIVE` actions, unknown
-  operations, unregistered argument shapes, and targets outside exact signed scope remain denied.
-- Add an adapter registry keyed by exact adapter and operation names. Registration is immutable
-  after admission, duplicate keys fail startup, and an adapter cannot select another adapter or
-  execute an action outside the safety runtime.
-- Extend new evidence events with scenario ID and version, lifecycle stage, component and oracle
-  versions, snapshot hashes, detector and oracle results, and redacted artifact pointers. Keep
-  existing fields optional where necessary so Phase 0 ledgers remain readable and verifiable.
+- 133 tests passed with 1 container-gated skip; 88.47% branch-aware coverage against the 85%
+  floor; the 57 Phase 0 tests pass unchanged.
+- 100/100 deterministic replay trials matched normalized event and oracle hashes, 20 per scenario,
+  with no trial excluded (threshold: 95).
+- Seeded recall 1.0 (20 true positives, 0 false negatives) and 0 false positives across 20
+  defended negative controls, computed from explicit ground-truth labels (thresholds: ≥90% recall,
+  ≤5% false positives).
+- Failure and cancellation injected at all 12 lifecycle stages in both raising and cancelled forms;
+  every case tore down and left a verifiable partial bundle or an explicit integrity incident.
+- Container lane confirmed non-root execution, unwritable root filesystem, refused outbound
+  connection, and a control plane that rejects a customer credential with HTTP 403.
+- `make phase1-demo` completed all five paired evaluations and verified every bundle in 9 of 11
+  runs; the 2 exceptions failed at image build on transient registry DNS, before any evaluation,
+  and both failed closed with a retained partial bundle.
 
-#### Deterministic fixture and drivers
+Invariants established here that later phases must not weaken:
 
-- Add a separate Phase 1 fixture rather than relaxing `targets/phase0_fixture`. Its container has a
-  read-only root filesystem, tmpfs-backed mutable state, dropped capabilities,
-  `no-new-privileges`, loopback-bound data and control ports, and no external egress.
-- Give the fixture an authenticated, separately scoped control plane for provision, seed,
-  snapshot, telemetry read, defense application, reset, and teardown. Attack credentials cannot
-  address this plane. Seed and reset return canonical state hashes that the runner verifies before
-  each paired execution.
-- Make fixture behavior reproducible with a seeded generator, injected logical clock, deterministic
-  identifiers, stable response ordering, and no wall-clock or random values in scored output.
-- Implement an async HTTP adapter with explicit DNS observations, authorization before every
-  connection, manual redirect handling, strict request and wall-time deadlines, bounded response
-  sizes, and automatic redirects disabled.
-- Implement a typed tool adapter that validates registered input and output schemas and enforces
-  idempotency keys. Duplicate writes return the original outcome and do not repeat their effect.
-- Implement a chat adapter backed only by exact `OfflineModelStore` responses. A fixture miss fails
-  closed. Model-produced tool intents are parsed as untrusted data, compiled into typed actions,
-  and sent through `SafetyRuntime`; the chat adapter never invokes tools itself.
-- Implement a fixture controller whose `finally` path always requests teardown, records the
-  outcome, flushes evidence, and preserves partial run artifacts after success, denial, exception,
-  timeout, budget exhaustion, or cancellation.
+- `SafetyRuntime` is the per-action enforcement boundary; every target-facing action, including
+  tool intents parsed out of model output, passes through it. No adapter selects another adapter,
+  chooses a target, or performs I/O outside the runtime.
+- Planner and model output is untrusted data. It cannot carry code, shell, URLs, or browser
+  instructions, and it is compiled into a typed DAG resolved from signed asset IDs before anything
+  is provisioned.
+- Oracles use a closed operator set — equality, existence, containment, count comparison,
+  before/after delta. Arbitrary expressions and code evaluation stay forbidden.
+- A defense is credited only when the seeded attack succeeds in the baseline leg and fails under
+  the same seed, plan, and budget after mitigation. Defenses come only from a versioned registry
+  that the signed manifest pre-authorizes; the harness never edits application source.
+- Harness authorization and target vulnerability are independent facts. A permitted harness action
+  is never, by itself, evidence that an attack failed.
+- Model susceptibility and executed side effects are recorded separately, as are "the attacker was
+  ineffective" and "the defense worked".
+- Teardown runs in a `finally` path that always executes, records its outcome, flushes evidence,
+  and preserves partial artifacts.
 
-#### Closed-loop scoring, detection, and defense
+Debt carried out of Phase 1, to be cleared in WP2.0:
 
-- Implement deterministic state oracles with a closed operator set: equality, existence,
-  containment, count comparison, and before/after state delta. Paths and expected values are typed;
-  arbitrary expressions and code evaluation are forbidden.
-- Score clean utility before attack and after mitigation. Record attack susceptibility separately
-  from executed unauthorized side effects, and credit a defense only when the seeded attack
-  succeeds in the baseline leg and fails under the same seed, plan, and budget after mitigation.
-- Implement structured detector rules over fixture audit telemetry and kernel events. Each result
-  includes the matched rule, supporting event IDs, expected/observed status, and time-to-detect
-  measured from the first attack action.
-- Select defenses exclusively from a versioned registry. A profile declares applicable scenario
-  IDs, the exact fixture configuration mutation, verification checks, and rollback behavior. The
-  signed manifest must pre-authorize the selected profile; Phase 1 never edits application source
-  or accepts a free-form remediation.
-- Produce a typed finding only from state deltas, canary exposure, policy decisions, or tool traces.
-  Each finding carries the scoped asset, attacker goal, observed impact, evidence links,
-  reproducibility, confidence, severity rationale, taxonomy mappings, oracle version, and status.
+- `src/purpleloop/fixture/relay.py` has 0% coverage in the deterministic lane; it only runs in the
+  container lane and is excluded from the reported coverage figure.
+- Fixture image build is not offline. Base images resolve from public registries, which caused 2
+  of 11 demo failures on transient DNS.
+- The `PYTHONHASHSEED` matrix that caught the JCS/`frozenset` canonicalization defect was run by
+  hand during acceptance and is not a standing CI job.
+- Detection delay is measured in injected logical ticks and budget tokens are reserved capacity;
+  neither is a wall-clock or billing claim, and reporting must keep saying so.
+- Finding reproducibility is not asserted from a single paired run.
+- Section 5 of this document lists `docs/prd.md` and `policies/`, neither of which exists in the
+  tree.
 
-Harness authorization and target vulnerability are independent facts. The signed manifest may
-authorize the harness to exercise a synthetic fixture operation while the state oracle classifies
-the fixture application's response as an authorization failure. A permitted harness action is
-never, by itself, evidence that an attack failed.
+### Phase 2 — Realistic SaaS and browser lane
 
-#### Five-scenario deterministic corpus
+#### Objective and verified starting point
 
-Create five versioned offline scenarios. Each contains a vulnerable seed, clean utility task,
-baseline attack, positive control, clean or defended negative control, deterministic state oracle,
-expected detector behavior, and one pre-approved defense:
+Starting point is `ecf1ada`: 133 tests, 88.47% branch coverage, a container-isolated deterministic
+loop over five scenarios against a single in-memory fixture, with HTTP / tool / chat adapters, the
+Inspect bridge, and a self-verifying evidence bundle.
 
-1. A customer reads another tenant's object; enforce tenant ownership before object retrieval.
-2. A customer updates a protected property through mass assignment; restrict writes to an exact
-   role-specific field allowlist.
-3. A customer creates a synthetic refund without verified approval; require and validate an
-   approval record before the refund state transition.
-4. A direct chat injection produces a canary-export tool intent; apply a capability guard that
-   rejects exports outside the legitimate task's declared capability set.
-5. Retrieved fixture content contains an indirect injection that produces a canary-export intent;
-   treat retrieved instructions as untrusted data and apply the same capability boundary before
-   tool execution.
+Phase 2 replaces that single in-memory fixture with a persistent multi-organization application
+and adds a browser surface, without changing the authority model. `SafetyRuntime` stays the
+per-action boundary and `PurpleTeamRunner` stays the lifecycle owner. The Phase 1 fixture,
+scenarios, and CI lane remain in the tree, green, and unchanged, so the deterministic loop stays
+available as a fast regression lane.
 
-Ground-truth labels identify every expected seeded finding and negative control so recall and
-false-positive rates are calculated from explicit cases rather than inferred from scenario-level
-success.
+Two risks dominate this phase and are addressed explicitly rather than discovered late:
+persistent database state threatens the reset and snapshot-hash guarantees, and the browser
+threatens bit-level replay determinism.
 
-#### Inspect bridge, evidence bundle, and public commands
+#### WP2.0 — Clear carried debt
 
-- Add Inspect AI as a pinned evaluation and log bridge while keeping PurpleLoop scenarios, plans,
-  policy decisions, evidence, oracle verdicts, and summaries canonical.
-- Convert scenarios into Inspect `MemoryDataset` samples. A custom solver invokes
-  `PurpleTeamRunner`; a deterministic scorer translates PurpleLoop oracle results into Inspect
-  scores and includes evidence references.
-- Register a `purpleloop/offline` Inspect model provider backed by `OfflineModelStore`. Exact
-  request/model/profile mismatches fail closed and there is no network fallback or cloud credential
-  requirement.
-- Add `validate-scenario`, `run-scenario`, and `verify-bundle` to the CLI without changing the
-  behavior or arguments of existing Phase 0 commands.
-- Add `make phase1-demo` as the single offline entry point. It provisions the Phase 1 fixture,
-  executes all five scenarios, writes and verifies reports, and tears down the fixture even when
-  the command fails.
-- Emit a self-contained run directory containing normalized manifest and scenario inputs, compiled
-  plans, the evidence ledger and anchor, before/after snapshots, Inspect logs, canonical result
-  JSON, JUnit XML, SARIF 2.1.0, static HTML, and a SHA-256 artifact inventory. Bundle verification
-  checks every digest, ledger link, required artifact, and referenced evidence ID.
-- JUnit contains one test case per scenario: a security regression is a failure, harness/runtime
-  malfunction is an error, and an inconclusive oracle is skipped. SARIF contains one result per
-  seeded baseline finding with risk mapping, mitigation, and evidence references. The offline HTML
-  report shows clean utility, baseline attack and side effects, detection, selected defense,
-  replay result, utility regression, budget/resource use, and redacted evidence links.
+- Unit-test `fixture/relay.py` on the host so ingress plumbing is covered in the deterministic
+  lane, or document precisely why it cannot be and keep it excluded on purpose.
+- Pin every fixture base image by digest and add a pre-pull or cached-image path so a demo run
+  cannot fail on registry DNS. Report an image-build failure as an outcome class distinct from an
+  evaluation failure.
+- Promote the `PYTHONHASHSEED` matrix to a standing CI job across at least five seeds.
+- Reconcile section 5 with the tree: either add `policies/` and `docs/prd.md` or correct the paths.
 
-#### Four-week delivery sequence
+#### WP2.1 — `supportlab` application
 
-- **Week 4 — Contracts and orchestration:** implement versioned schema compatibility, the plan
-  compiler, adapter registry, `PurpleTeamRunner`, shared run controls, and lifecycle evidence.
-- **Week 5 — Fixture and evaluation logic:** implement the isolated fixture, control plane,
-  HTTP/tool/chat drivers, state snapshots, five scenarios, deterministic oracles, detectors, and
-  the defense registry.
-- **Week 6 — Evaluation and reporting:** implement the Inspect bridge and offline provider,
-  evidence bundles, JUnit/SARIF/HTML generation, CLI workflow, and `phase1-demo` command.
-- **Week 7 — Hardening and acceptance:** complete replay, property, contract, fault-injection, and
-  end-to-end tests; add a separate Phase 1 CI lane; update operating documentation; and record
-  measured acceptance evidence. The existing Phase 0 CI lane remains unchanged.
+- FastAPI application with two organizations, at least four users spanning customer, agent, and
+  admin roles, and tickets, documents, refunds, exports, audit log, and canary records.
+- PostgreSQL with migrations and a deterministic seeded dataset. Seeding returns a canonical state
+  hash the way the Phase 1 fixture does, and the runner verifies it before each paired leg.
+- Determinism under a real database: injected logical clock, stable identifiers, explicit ordering
+  on every query that feeds scored output, a declared transaction isolation level, and no
+  wall-clock or random values in scored output.
+- Reset must be state-restoring and fast — template database or transactional rollback — and is
+  verified by snapshot-hash equality, not assumed from a successful command.
+- Toggleable flaws, each a named configuration value whose vulnerable/defended pair is a registry
+  defense profile: object-level (BOLA), function-level (BFLA), property-level mass assignment,
+  workflow and approval bypass, SSRF-capable upstream fetch, and unsafe consumption of upstream
+  data.
+- Containment matches Phase 1: read-only root, tmpfs state, non-root user, dropped capabilities,
+  `no-new-privileges`, internal-only network, loopback ingress relay, separately scoped control
+  plane, no egress. PostgreSQL joins the internal network with no published ports and per-run
+  synthetic credentials that attack credentials cannot address.
 
-#### Test plan and acceptance checkpoint
+#### WP2.2 — Browser adapter
 
-- Unit-test version conversion, strict schemas, plan compilation and cycle rejection, adapter
-  dispatch, oracle operators, detector metrics, defense applicability, report serialization, and
-  artifact inventory verification.
-- Property-test mutations of host, tenant, resource, method, arguments, redirects, and side-effect
-  class. Every unauthorized mutation must be denied before adapter I/O.
-- Run a shared adapter contract suite covering typed inputs and outputs, DNS and redirect
-  authorization, deadlines, cancellation, idempotency, redaction, postconditions, bounded output,
-  and absence of hidden network fallback.
-- Integration-test all five baseline/defense/replay loops with identical seed hashes, valid evidence
-  chains, bounded shared budgets, passing clean tasks, and independently recorded harness policy and
-  application security outcomes.
-- Inject failure and cancellation at every lifecycle stage. Each case must tear down, append a
-  termination outcome when the ledger is writable, and leave a verifiable evidence bundle or an
-  explicit evidence-integrity incident.
-- Run 100 deterministic replay trials—20 per scenario—and require at least 95 matching normalized
-  event and oracle hashes. Report every mismatch rather than excluding it.
-- Detect all five seeded vulnerable cases and allow no more than one reviewed false positive across
-  20 clean or defended negative-control executions. This exceeds the Phase 1 thresholds of at
-  least 90% seeded-finding recall and at most 5% false positives.
-- Preserve the 85% branch-coverage floor and keep all 57 Phase 0 regression tests passing.
-- Block Phase 1 acceptance unless the integration suite observes zero unauthorized harness side
-  effects, failed and cancelled runs preserve evidence and teardown, and `make phase1-demo`
-  produces and verifies a complete report without cloud credentials.
+- Direct Playwright Python adapter registered like any other adapter. It never selects its own
+  target; plans carry typed browser steps — navigate, fill, click, read — resolved from signed
+  asset IDs, and free-form JavaScript from planner output is rejected at compile time.
+- Fresh browser context per leg with no shared profile or storage state, downloads disabled, and a
+  fixed viewport and locale.
+- Every navigation, redirect, and subresource origin is authorized before it happens. Unauthorized
+  origins are aborted at the routing layer, recorded as policy denials, and charged to the run
+  budget rather than silently dropped.
+- Deadlines, cancellation, kill-switch cooperation, idempotency, redaction, and bounded output
+  match the shared adapter contract suite. Browser processes are killed in the teardown `finally`
+  path.
+- Explicit waits on typed selectors only; no arbitrary sleeps.
+- Per-leg trace ZIP and screenshots are written into the run directory, redacted, and referenced by
+  digest in the artifact inventory.
+- Scored output derives from state and DOM assertions, never from screenshot comparison, because
+  browser timing is not bit-reproducible.
 
-Phase 1 remains local/CI-only and deterministic. Real models, browser automation, the realistic
-`supportlab` application, PostgreSQL, adaptive attackers, LLM judges, third-party attack imports,
-and autonomous source remediation remain assigned to later phases.
+#### WP2.3 — Scenario corpus, 15–20 cases
 
-### Phase 2 — Realistic SaaS and browser lane (weeks 8–12)
+- Cover object-, function-, and property-level authorization; authentication and role boundaries;
+  sensitive workflows such as refund and export approval; SSRF; misconfiguration and inventory;
+  unsafe upstream consumption; and cross-role and cross-tenant workflows.
+- Every scenario keeps the Phase 1 shape: vulnerable seed, clean utility task, baseline attack,
+  positive control, clean or defended negative control, deterministic oracle, expected detector
+  behavior, and one pre-approved defense.
+- Extend `scenarios/ground-truth.json` so recall and false positives stay computed from explicit
+  labels. An unlabelled scenario continues to raise rather than be skipped.
+- Where a workflow has both an API and a browser path, author both against the same oracle so
+  cross-surface agreement is measurable rather than asserted.
 
-Deliver:
+#### WP2.4 — Isolation, evidence completeness, and cost estimation
 
-- `supportlab`: two organizations, multiple users/roles, tickets, documents, refunds, exports, canary records, and intentionally toggleable BOLA/BFLA/property/workflow flaws.
-- Direct Playwright adapter with fresh browser contexts and trace ZIPs.
-- 15–20 SaaS/API/browser scenarios and configurable fixes.
+- Per-run containment identity: unique network, volume, and container names, with a leak test that
+  fails if any run observes another run's state.
+- Compute evidence-field completeness as a tested metric over required fields, and report it; do
+  not establish it by inspection.
+- Emit a pre-run resource estimate — requests, wall time, browser contexts, records touched — and
+  record the actual-versus-estimate delta in the run summary.
 
-Checkpoint:
+#### WP2.5 — CI, decision records, and acceptance
 
-- 100 consecutive isolated local runs with no cross-run state leakage.
-- Zero unintended cross-tenant access by the harness.
-- At least 99% required evidence-field completeness.
-- Browser and API oracles agree on shared workflows.
-- Actual token/API cost is within ±10% of the pre-run estimate.
+- New `phase2` workflow with a deterministic lane and a container/browser lane. The `phase0` and
+  `phase1` workflows are untouched.
+- ADRs for the browser adapter's authorization model and for the persistent-fixture reset strategy.
+- Any code that only executes in the container lane is named as a coverage exclusion in the
+  acceptance record, the way `relay.py` was.
+- `docs/phase2-acceptance.md` recording measured results, defects found during acceptance, and
+  known limits.
 
-### Phase 3 — LLM/RAG agent and adaptive attack lane (weeks 13–17)
+#### Checkpoint
 
-Deliver:
+- 100 consecutive isolated local runs with no cross-run state leakage; every failure is reported
+  rather than rerun until clean.
+- Zero unintended cross-tenant access by the harness across the integration suite.
+- At least 99% required evidence-field completeness, computed by the tested metric.
+- Browser and API oracles agree on every shared workflow; each disagreement is reported per
+  scenario rather than averaged away.
+- Actual resource use within ±10% of the pre-run estimate. Phase 2 remains offline for models, so
+  this checkpoint covers requests, wall time, and browser contexts; the token and API-cost form of
+  it moves to Phase 3, where real model calls first exist.
+- Seeded recall at least 90% and false positives at most 5% across the expanded corpus.
+- Deterministic replay at least 95% on the API lane. The browser lane reports its own replay rate
+  separately, with a stated reason for any gap, instead of being folded into one number.
+- Phase 0's 57 tests and Phase 1's 133 tests pass unchanged, and the 85% branch-coverage floor
+  holds.
 
-- RAG assistant and narrow email/CRM/refund/export/memory tools inside `supportlab`.
-- Direct/indirect injection, goal hijacking, memory poisoning, system-prompt leakage, excessive agency, tool misuse, and canary-exfiltration scenarios.
-- Optional bounded adaptive attacker plus selected PyRIT/garak imports through adapters.
-- Hybrid judge with a dedicated evaluator-red-team corpus.
+### Phase 3 — LLM/RAG agent and adaptive attack lane
 
-Checkpoint:
+#### Objective and contract change
 
-- 30–50 total high-quality scenarios with versioned taxonomy mappings.
-- Report clean utility, utility under attack, attack success, and executed side effects separately.
-- No out-of-scope action reaches the target even when the target model is compromised.
-- Semantic judge agreement with adjudicated labels reaches Cohen’s kappa or Krippendorff’s alpha of at least 0.7.
-- Judge order-swap consistency reaches at least 95%.
-- Held-out evaluator-injection resistance reaches at least 99% with no critical false pass.
+Phase 3 introduces the project's first non-deterministic components: real model calls, a RAG
+assistant, an adaptive attacker, and LLM judges. The contract change is explicit and is the
+central design task of this phase — deterministic oracles remain primary and binding, stochastic
+components produce advisory signals only, and every reported verdict records which kind produced
+it. No stochastic result may gate a release-blocking invariant.
 
-### Phase 4 — CI quality system and portfolio release (weeks 18–22)
+#### WP3.1 — Agent surface inside `supportlab`
 
-Deliver:
+- RAG assistant with document ingest, a memory store, and narrow email, CRM, refund, export, and
+  memory tools with typed schemas, idempotency keys, and a declared per-task capability set.
+- All tool execution goes through `SafetyRuntime`. The assistant parses intents; it never invokes
+  a tool itself.
+- Hostile content arrives through tickets, documents, HTML and Markdown, API responses, tool
+  descriptions, memory, logs, and inter-agent messages. Each channel gets at least one scenario.
+- Provenance tagging: every retrieved chunk carries its source and trust level into evidence, so an
+  indirect injection can be traced back to the document that delivered it.
 
-- Fast PR lane using deterministic fixtures and 10–20 smoke scenarios.
-- Nightly/manual lane with real model calls, adaptive attacks, browser workflows, at least five stochastic repetitions, and confidence intervals.
-- Release lane with held-out mutations, signed run attestations, regression registry, retention policy, audit export, and incident runbook.
-- Polished README, architecture diagrams, recorded demo, sample evidence bundle, benchmark methodology, and results narrative.
+#### WP3.2 — Model providers beyond offline
 
-Checkpoint:
+- OpenAI-compatible adapter supporting configured APIs and Ollama/vLLM profiles. The offline
+  provider stays the default and the CI default; a missing credential skips the lane and never
+  falls back silently to a network call.
+- Pin and record per event: model ID, version or digest where available, decoding parameters, seed
+  where supported, and system-prompt hash.
+- Extend budgets to real tokens and real cost with pre-run estimates and hard caps. Exceeding a cap
+  terminates fail-closed and is recorded as a budget outcome, not an error.
+- Model credentials are broker-held handles, absent from model context and evidence.
+
+#### WP3.3 — Corpus to 30–50 scenarios
+
+- Direct and indirect injection including encoded, multilingual, and multiturn variants;
+  system-prompt leakage; RAG and memory poisoning; goal hijacking and confused-deputy attacks;
+  excessive agency and tool misuse; argument and schema injection; unsafe output handling; canary
+  exfiltration and covert channels; unexpected code execution and cascading failure; and
+  human-approval spoofing.
+- Versioned taxonomy mappings (OWASP LLM/GenAI 2025, OWASP Agentic 2026, MITRE ATLAS, ASVS 5.0,
+  API Security Top 10 2023) pinned in the scenario file and validated by a schema test.
+- Provenance and license fields are required on any imported case.
+- Ground-truth labels extend to every new scenario; the corpus metric keeps raising on unlabelled
+  cases.
+
+#### WP3.4 — Bounded adaptive attacker and third-party imports
+
+- The attacker proposes typed plan nodes only. Its output remains untrusted data through the same
+  compiler, with attempt, depth, and budget caps, no new adapters, no new targets, and no scope
+  widening. A rejected proposal is recorded as evidence, not treated as a harness error.
+- PyRIT, garak, Promptfoo, and AgentDojo-style imports arrive through adapters that normalize into
+  PurpleLoop scenarios. No imported framework owns the canonical schema.
+
+#### WP3.5 — Hybrid judge and evaluator red team
+
+- Deterministic oracle first; the LLM judge runs only on unresolved semantics, and abstention is a
+  valid recorded outcome rather than a failure.
+- Structured rubric over normalized evidence with cited evidence IDs, confidence, repeated trials,
+  and order swaps.
+- A dedicated evaluator-red-team corpus covering evidence-borne injection, fake approvals,
+  scope-widening claims, rubric gaming, verbosity and position and self-family bias, and
+  unsupported citations.
+- Human-adjudicated labels are built and frozen before the judge is tuned, then held out and
+  versioned.
+
+#### WP3.6 — Reporting for stochastic results
+
+- Report clean utility, utility under attack, attack success, and executed unauthorized side
+  effects as four separate numbers.
+- At least five repetitions with confidence intervals, per risk class, with worst cases,
+  exclusions, and provenance shown alongside any aggregate.
+- Every stochastic figure carries its n, seed policy, and model pin.
+
+#### Checkpoint
+
+- 30–50 high-quality scenarios with versioned taxonomy mappings and complete ground-truth labels.
+- Clean utility, utility under attack, attack success, and executed side effects reported
+  separately.
+- No out-of-scope action reaches the target even when the target model is compromised, established
+  by property tests and observed across the integration suite.
+- Semantic judge agreement with adjudicated labels at Cohen's kappa or Krippendorff's alpha of at
+  least 0.7, reported with n and a confidence interval.
+- Judge order-swap consistency at least 95%.
+- Held-out evaluator-injection resistance at least 99% with no critical false pass.
+- Actual token and API cost within ±10% of the pre-run estimate.
+- The deterministic lanes replay exactly as before; the stochastic lane reports its own measured
+  variance instead of claiming determinism.
+
+### Phase 4 — CI quality system and portfolio release
+
+#### WP4.1 — Fast PR lane
+
+Deterministic fixtures and 10–20 smoke scenarios, no model credentials, a stated wall-time target,
+and evidence artifacts uploaded on both success and failure.
+
+#### WP4.2 — Nightly and manual lane
+
+Real model calls, adaptive attacks, and browser workflows with at least five stochastic
+repetitions and confidence intervals. Credentials come from repository secrets; a failure is
+surfaced, never silently tolerated.
+
+#### WP4.3 — Release lane
+
+Held-out mutation set kept out of the tuning loop, signed run attestations in an in-toto/SLSA-shaped
+purpose-built format, a regression registry mapping every accepted finding to a test, a retention
+policy, an audit export, and an incident runbook.
+
+#### WP4.4 — Enforcing gates
+
+CI blocks scope bypasses, critical regressions, schema drift, budget failures, and statistically
+meaningful per-risk-class regressions. The regression test and its threshold are specified and
+unit-tested, not left to judgment at review time.
+
+#### WP4.5 — Portfolio release
+
+README with the one-command demo, architecture diagrams, a recorded demo, a sample evidence bundle
+a reviewer can verify offline, the benchmark methodology, and a results narrative that carries its
+uncertainty and its limitations.
+
+#### Checkpoint
 
 - At least 98% pinned replay success.
 - At least 80% regression coverage for accepted findings.
-- At least 95% precision on an adjudicated finding sample.
-- An independent reviewer reconstructs a passing run, denied run, and incident from exported artifacts within 30 minutes.
-- CI blocks scope bypasses, critical regressions, schema drift, budget failures, and statistically meaningful per-risk-class regressions.
+- At least 95% precision on an adjudicated finding sample, reported with n and the sampling method.
+- An independent reviewer reconstructs a passing run, a denied run, and an incident from exported
+  artifacts within 30 minutes. This is measured with an actual reviewer or reported as untested;
+  it is not asserted from the author's own familiarity with the bundle.
+- CI demonstrably blocks each of the five classes in WP4.4, proven by a deliberately failing branch
+  per class.
 
 ### Phase 5 — Optional expansion
 
-Only after v1:
+Only after v1, and each item is its own work package with its own acceptance note:
 
 - Import more framework adapters or benchmark subsets.
 - Add additional disposable target fixtures.
 - Compare models and defenses across a pinned evaluation matrix.
-- Add a self-hosted observability profile or human-review UI.
+- Add a self-hosted observability profile or a human-review UI.
 - Require shadow mode and explicit risk approval for every autonomy or action-class increase.
 
 ## 9. Test strategy
