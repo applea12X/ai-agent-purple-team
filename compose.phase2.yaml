@@ -1,0 +1,86 @@
+services:
+  supportlab-db:
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+    read_only: true
+    tmpfs:
+      - /var/lib/postgresql/data:size=256m
+      - /run/postgresql:size=16m
+      - /tmp:size=16m
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    security_opt: [no-new-privileges:true]
+    environment:
+      POSTGRES_USER: supportlab
+      POSTGRES_PASSWORD: ${SUPPORTLAB_DATABASE_PASSWORD:?required}
+      POSTGRES_DB: postgres
+      PGDATA: /var/lib/postgresql/data/pgdata
+    networks: [supportlab-isolated]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U supportlab -d postgres"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+  supportlab-upstream:
+    image: purpleloop-supportlab-fixture
+    build:
+      context: .
+      dockerfile: targets/supportlab/Dockerfile
+    command: [/app/.venv/bin/python, -m, purpleloop.fixture.supportlab.upstream]
+    read_only: true
+    tmpfs: ["/tmp:size=8m"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [supportlab-isolated]
+    healthcheck:
+      test: [CMD, /app/.venv/bin/python, -c, "import socket; socket.create_connection(('127.0.0.1',8082),1).close()"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+  supportlab-fixture:
+    image: purpleloop-supportlab-fixture
+    build:
+      context: .
+      dockerfile: targets/supportlab/Dockerfile
+    read_only: true
+    tmpfs: ["/tmp:size=16m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      SUPPORTLAB_ACTOR_CREDENTIALS: ${SUPPORTLAB_ACTOR_CREDENTIALS:?required}
+      SUPPORTLAB_CONTROL_CREDENTIAL: ${SUPPORTLAB_CONTROL_CREDENTIAL:?required}
+      SUPPORTLAB_DATABASE_URL: postgresql://supportlab:${SUPPORTLAB_DATABASE_PASSWORD:?required}@supportlab-db:5432/postgres
+      SUPPORTLAB_UPSTREAM_URL: http://supportlab-upstream:8082
+    networks: [supportlab-isolated]
+    depends_on:
+      supportlab-db:
+        condition: service_healthy
+      supportlab-upstream:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, /app/.venv/bin/python, -c, "import socket; socket.create_connection(('127.0.0.1',8080),1).close(); socket.create_connection(('127.0.0.1',8081),1).close()"]
+      interval: 1s
+      timeout: 2s
+      retries: 40
+  supportlab-ingress:
+    image: purpleloop-supportlab-fixture
+    command: [/app/.venv/bin/python, -m, purpleloop.fixture.supportlab.relay]
+    read_only: true
+    tmpfs: ["/tmp:size=8m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ports:
+      - "127.0.0.1:28080:8080"
+      - "127.0.0.1:28081:8081"
+    networks: [supportlab-isolated, supportlab-ingress]
+    depends_on:
+      supportlab-fixture:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, /app/.venv/bin/python, -c, "import socket; socket.create_connection(('127.0.0.1',8080),1).close(); socket.create_connection(('127.0.0.1',8081),1).close()"]
+      interval: 1s
+      timeout: 2s
+      retries: 40
+networks:
+  supportlab-ingress: {}
+  supportlab-isolated:
+    internal: true

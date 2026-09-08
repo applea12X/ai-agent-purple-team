@@ -30,6 +30,7 @@ class ToolDefinition:
     resource_tenants: Mapping[str, str] | None = None
     tenant_id: str | None = None
     credential_handle: str | None = None
+    min_requests: int = 1
 
     def expected_path(self, action: ActionRequest) -> str:
         if self.resource_required and action.target.resource_id is None:
@@ -69,7 +70,7 @@ class ToolDefinition:
             if action.schema_version != "1.1.0" or action.credential_handle is None:
                 raise ToolDefinitionError("Phase 1 operation requires version and credentials")
             if (
-                action.budget.requests < 1
+                action.budget.requests < self.min_requests
                 or action.budget.records < self.min_records
                 or action.budget.tokens < self.min_tokens
                 or action.budget.writes < int(self.side_effect == SideEffectClass.WRITE)
@@ -103,6 +104,7 @@ class ToolRegistry:
                             else None,
                             "min_records": item.min_records,
                             "min_tokens": item.min_tokens,
+                            "min_requests": item.min_requests,
                             "resource_tenants": dict(item.resource_tenants)
                             if item.resource_tenants
                             else None,

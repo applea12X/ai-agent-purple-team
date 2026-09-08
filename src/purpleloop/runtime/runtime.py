@@ -7,16 +7,21 @@ from typing import cast
 
 from pydantic import computed_field
 
-from purpleloop.adapters.base import Adapter, AdapterResult
+from purpleloop.adapters.base import Adapter, AdapterResult, SubresourceDenied
 from purpleloop.control.budgets import BudgetError, BudgetLedger, Reservation
 from purpleloop.control.credentials import CredentialBroker
 from purpleloop.control.kill_switch import KernelStopped, KillSwitch
 from purpleloop.control.manifest import ManifestError, ManifestVerifier
 from purpleloop.control.policy import PolicyEngine
 from purpleloop.control.redaction import Redactor
-from purpleloop.control.targets import TargetError, validate_observation
+from purpleloop.control.targets import (
+    TargetError,
+    canonicalize_url,
+    match_scope,
+    validate_observation,
+)
 from purpleloop.runtime.ledger import EvidenceLedger
-from purpleloop.schemas.action import ActionRequest, TargetObservation
+from purpleloop.schemas.action import ActionRequest, ActionTarget, BudgetRequest, TargetObservation
 from purpleloop.schemas.authorization import AuthorizationManifest
 from purpleloop.schemas.common import StrictModel, digest_data
 from purpleloop.schemas.event import EventKind, EvidenceEvent
@@ -145,8 +150,57 @@ class SafetyRuntime:
 
         next_hop = 0
 
+        async def authorize_subresource(observation: TargetObservation) -> None:
+            """Route-level origin authorization for a browser subresource.
+
+            Decided before the request is sent, from signed data only: the request is permitted
+            when its URL falls inside the action's own signed asset or its origin is a signed
+            subresource origin. Either way it is charged to the run budget and recorded, so a
+            blocked request is never silently dropped.
+            """
+            try:
+                self.verifier.verify(manifest, now=self.clock())
+                expected = match_scope(action.target, manifest.assets)
+                canonical = canonicalize_url(observation.url)
+                origin = f"{canonical.scheme}://{canonical.host}:{canonical.port}"
+                reason = "SUBRESOURCE_PERMITTED"
+                try:
+                    observed_scope = match_scope(
+                        ActionTarget(url=observation.url, tenant_id=action.target.tenant_id),
+                        manifest.assets,
+                    )
+                    same_asset = observed_scope.asset_id == expected.asset_id
+                except TargetError as exc:
+                    same_asset = False
+                    reason = exc.reason_code
+                signed_origins = manifest.phase2.subresource_origins if manifest.phase2 else ()
+                permitted = same_asset or origin in signed_origins
+                if not permitted and reason == "SUBRESOURCE_PERMITTED":
+                    reason = "SUBRESOURCE_ORIGIN_NOT_SIGNED"
+                await self.budgets.charge(BudgetRequest(requests=1, records=0))
+                event = self._record(
+                    run_id,
+                    trace_id,
+                    EventKind.POLICY,
+                    manifest_digest,
+                    decision.policy_digest,
+                    action_digest,
+                    "permit" if permitted else "deny",
+                    reason,
+                    {"url": observation.url, "origin": origin, "kind": "subresource"},
+                    redactor=effective_redactor,
+                )
+                event_hashes.append(event.event_hash or "")
+                if not permitted:
+                    raise SubresourceDenied(reason)
+            except (ManifestError, TargetError, BudgetError) as exc:
+                raise BoundaryDenied(exc.reason_code) from exc
+
         async def authorize_target(observation: TargetObservation) -> None:
             nonlocal next_hop
+            if observation.kind == "subresource":
+                await authorize_subresource(observation)
+                return
             try:
                 if observation.hop_index != next_hop:
                     raise BoundaryDenied("INVALID_REDIRECT_SEQUENCE")

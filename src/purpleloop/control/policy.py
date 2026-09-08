@@ -35,7 +35,8 @@ class PolicyEngine(Protocol):
 
 
 class DefaultDenyPolicy:
-    VERSION = "phase0-v2"
+    # Bumped for the Phase 2 checks below; 1.0 and 1.1 manifests take exactly the earlier path.
+    VERSION = "phase2-v3"
 
     def __init__(
         self,
@@ -100,6 +101,10 @@ class DefaultDenyPolicy:
             return self._deny("METHOD_NOT_ALLOWED")
         if action.side_effect not in manifest.allowed_side_effects:
             return self._deny("SIDE_EFFECT_NOT_ALLOWED")
+        if manifest.phase2 is not None:
+            phase2_reason = self._evaluate_phase2(manifest, action)
+            if phase2_reason is not None:
+                return self._deny(phase2_reason)
         if (
             action.credential_handle is not None
             and action.credential_handle not in manifest.credential_handles
@@ -117,6 +122,29 @@ class DefaultDenyPolicy:
         }:
             return self._deny("EGRESS_NOT_ALLOWED")
         return PolicyDecision(PolicyEffect.PERMIT, "PERMITTED", self.policy_digest)
+
+    def _evaluate_phase2(
+        self, manifest: AuthorizationManifest, action: ActionRequest
+    ) -> str | None:
+        """Manifest 1.2 checks. Ownership is resolved from signed data, never from the fixture."""
+        grants = manifest.phase2
+        assert grants is not None
+        if action.credential_handle == grants.database_credential_handle:
+            return "DATABASE_CREDENTIAL_FORBIDDEN"
+        if action.target.resource_id is not None and action.adapter != "control":
+            owner = grants.owner_of(action.target.resource_id)
+            if owner is None:
+                return "RESOURCE_NOT_SIGNED"
+            if owner != action.target.tenant_id:
+                return "RESOURCE_OWNERSHIP_MISMATCH"
+        if action.adapter == "browser":
+            try:
+                asset = match_scope(action.target, manifest.assets)
+            except TargetError as exc:
+                return exc.reason_code
+            if asset.asset_id not in grants.browser_assets:
+                return "BROWSER_ASSET_NOT_ALLOWED"
+        return None
 
     def _deny(self, reason_code: str) -> PolicyDecision:
         return PolicyDecision(PolicyEffect.DENY, reason_code, self.policy_digest)

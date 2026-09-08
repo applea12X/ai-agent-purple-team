@@ -35,3 +35,9 @@ phase1-check: lint typecheck test
 
 phase1-demo:
 	uv run purpleloop phase1-demo
+
+.PHONY: phase2-check supportlab-demo
+phase2-check: lint typecheck test
+
+supportlab-demo:
+	uv run purpleloop supportlab-demo

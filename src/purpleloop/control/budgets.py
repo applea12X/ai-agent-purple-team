@@ -69,6 +69,22 @@ class BudgetLedger:
                 self._used = BudgetRequest(**updated)
             self._active = max(0, self._active - 1)
 
+    async def charge(self, requested: BudgetRequest) -> None:
+        """Charge consumption that happens inside an active reservation.
+
+        A blocked browser subresource still costs a request. It is never silently dropped:
+        the charge is atomic against the same limits, and exhaustion fails the enclosing action.
+        """
+        async with self._lock:
+            proposed = {
+                name: getattr(self._used, name) + getattr(requested, name)
+                for name in BudgetRequest.model_fields
+            }
+            for name, amount in proposed.items():
+                if amount > getattr(self._limits, name):
+                    raise BudgetError(f"{name} budget exhausted")
+            self._used = BudgetRequest(**proposed)
+
     @property
     def used(self) -> BudgetRequest:
         return self._used

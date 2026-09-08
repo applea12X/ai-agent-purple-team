@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.2.0",
+  "name": "default-deny",
+  "engine": "purpleloop.control.policy.DefaultDenyPolicy",
+  "version_field": "phase2-v3",
+  "effect_default": "deny",
+  "reason_codes": [
+    "ADAPTER_NOT_ALLOWED",
+    "BROWSER_ASSET_NOT_ALLOWED",
+    "CREDENTIAL_NOT_ALLOWED",
+    "CREDENTIAL_SCOPE_DENIED",
+    "DATABASE_CREDENTIAL_FORBIDDEN",
+    "DEFENSE_NOT_AUTHORIZED",
+    "DESTRUCTIVE_FORBIDDEN",
+    "EGRESS_NOT_ALLOWED",
+    "EXACT_EXCLUSION",
+    "EXPLICITLY_DENIED",
+    "METHOD_NOT_ALLOWED",
+    "OPERATION_NOT_ALLOWED",
+    "POLICY_STALE",
+    "POLICY_UNAVAILABLE",
+    "RESOURCE_NOT_SIGNED",
+    "RESOURCE_OWNERSHIP_MISMATCH",
+    "SIDE_EFFECT_NOT_ALLOWED",
+    "TOOL_SCHEMA_MISMATCH"
+  ],
+  "ordered_checks": [
+    "availability",
+    "freshness",
+    "destructive-forbidden",
+    "defense-authorization",
+    "explicit-deny",
+    "adapter-allowed",
+    "operation-allowed",
+    "legacy-tool-schema",
+    "tool-and-scope",
+    "exact-exclusion",
+    "method-allowed",
+    "side-effect-allowed",
+    "phase2-ownership-and-browser-asset",
+    "credential-allowed",
+    "credential-scope",
+    "egress-host"
+  ],
+  "phase2_reason_codes": [
+    "DATABASE_CREDENTIAL_FORBIDDEN",
+    "RESOURCE_NOT_SIGNED",
+    "RESOURCE_OWNERSHIP_MISMATCH",
+    "BROWSER_ASSET_NOT_ALLOWED"
+  ]
+}

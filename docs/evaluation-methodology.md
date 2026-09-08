@@ -35,3 +35,16 @@ capacity, not cloud billing; all model responses are offline. Inspect JSON logs 
 canonical results without acting as an execution authority. The isolated acceptance lane is
 required in addition to ASGI testing because only the former exercises Docker containment
 and real socket behavior.
+
+## Phase 2 note
+
+The `supportlab` lane evaluates eighteen labelled synthetic scenarios across API and browser
+surfaces. Recall and false positives are computed by `corpus_metrics` from
+`scenarios/supportlab/ground-truth.json`, exactly as in Phase 1. Six workflows are authored on both
+surfaces against one shared oracle; cross-surface agreement is reported per group and disagreements
+are listed, never averaged into a rate. The API lane reports bit-exact deterministic replay; the
+browser lane reports its own replay rate separately, with a stated reason for any gap, because a
+browser is not bit-reproducible. A pre-run resource estimate is emitted and the actual-versus-
+estimate delta is recorded per run; the deterministic dimensions — requests, records, and browser
+contexts — match exactly, while wall time is reported as an estimate rather than a bound. Every
+Phase 2 metric ships with a test that fails when the metric is faked.

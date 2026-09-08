@@ -1,6 +1,6 @@
 # Phase 1 implementation — deterministic closed-loop MVP
 
-The Phase 1 section of [PRD.md](../PRD.md) is authoritative. This document describes the
+The Phase 1 section of [PRD.md](../planning/PRD.md) is authoritative. This document describes the
 implemented design and supersedes the earlier work-package draft.
 
 ## Contracts and authority

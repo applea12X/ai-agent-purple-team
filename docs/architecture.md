@@ -88,3 +88,44 @@ signatures never depend on iteration order. Each run emits a self-contained bund
 inputs, compiled plans, ledger and anchor, paired snapshots, Inspect logs, canonical JSON, JUnit,
 SARIF, HTML, and a digest inventory — and verification rechecks every digest, ledger link,
 required artifact, and referenced evidence ID.
+
+## Phase 2 — realistic SaaS and browser lane
+
+### Lanes and orchestration
+
+`SafetyRuntime` remains the per-action boundary and `PurpleTeamRunner` remains the lifecycle owner.
+A `LaneContract` names the trusted bindings that differ between fixtures — tool registry, defense
+registry, signed asset expectations, actor bindings, registered cross-tenant exercises, seed
+arguments, resource resolver, and resource calibration — so one runner drives both the Phase 1
+fixture and `supportlab` without a second lifecycle. The Phase 1 lane keeps exactly its earlier
+behavior.
+
+### supportlab and determinism under a database
+
+`supportlab` is a persistent multi-organization SaaS target: PostgreSQL in the container lane,
+in-process SQLite in the deterministic lane, behind one engine-independent surface that produces
+byte-identical seed hashes across both engines. Four determinism mitigations are enforced by tests:
+a total ordering on every query that reaches scored output, seed-derived application-assigned
+identifiers with no sequences in scored output, no `now()`/`random()`/`gen_random_uuid()` in schema
+or seed, and a snapshot hash computed from a canonical ordered `SELECT` through the JCS path. Reset
+restores from a seeded template and is verified by snapshot-hash equality before each paired leg.
+
+### Manifest-derived ownership
+
+Manifest 1.2 declares signed resource ownership tied to the deterministic seed. The kernel resolves
+`resource → tenant` from that signed data alone; the fixture's opinion about ownership is observed
+data the oracle evaluates and never feeds the authorization decision. This preserves the invariant
+that harness authorization and target vulnerability are independent facts across a database of
+seeded rows, without asking the untrusted component under test who owns a row.
+
+### Browser adapter
+
+The browser is a first-class adapter under the same authority as HTTP and tool adapters. Plans
+carry typed navigate/fill/click/read steps resolved from a signed asset ID and a trusted flow
+registry; free-form JavaScript, URLs, and selectors are rejected at compile time. Every navigation,
+redirect, and subresource origin is authorized through the target guard before the request, and an
+unauthorized origin is aborted at the routing layer, recorded as a policy denial, and charged to
+the run budget. Fresh context per leg, downloads disabled, fixed viewport/locale/timezone, clock
+frozen. Scored output derives only from application state and typed DOM assertions. The browser
+process is killed in the adapter's `finally` path, and browser-lane emergency stop is measured
+separately from Phase 0's in-process cancellation because a browser is an out-of-process child.

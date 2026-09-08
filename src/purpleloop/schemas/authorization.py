@@ -9,6 +9,7 @@ from pydantic import Field, field_validator, model_validator
 
 from purpleloop.schemas.action import SideEffectClass
 from purpleloop.schemas.common import StrictModel, require_identifier, require_utc
+from purpleloop.schemas.phase2 import Phase2Grants
 
 
 class AssetScope(StrictModel):
@@ -106,8 +107,9 @@ class Phase1Grants(StrictModel):
 
 
 class AuthorizationManifest(StrictModel):
-    schema_version: Literal["1.0.0", "1.1.0"] = "1.0.0"
+    schema_version: Literal["1.0.0", "1.1.0", "1.2.0"] = "1.0.0"
     phase1: Phase1Grants | None = None
+    phase2: Phase2Grants | None = None
     engagement_id: str
     owner: str
     approvers: tuple[str, ...]
@@ -200,16 +202,20 @@ class AuthorizationManifest(StrictModel):
             raise ValueError("Phase 0 permits read-only effects only")
         if SideEffectClass.DESTRUCTIVE in self.allowed_side_effects:
             raise ValueError("destructive actions are forbidden")
-        if self.schema_version == "1.1.0" and (
+        if self.schema_version in {"1.1.0", "1.2.0"} and (
             self.phase1 is None or self.data_classification != "synthetic"
         ):
             raise ValueError("Phase 1 requires explicit grants and synthetic data")
-        if self.schema_version == "1.1.0" and any(
+        if self.schema_version in {"1.1.0", "1.2.0"} and any(
             asset.host != "127.0.0.1" or asset.scheme != "http" for asset in self.assets
         ):
             raise ValueError("Phase 1 assets must be exact loopback HTTP fixtures")
-        if self.schema_version == "1.1.0" and self.synthetic_secrets:
+        if self.schema_version in {"1.1.0", "1.2.0"} and self.synthetic_secrets:
             raise ValueError("Phase 1 secrets belong in the broker, not the exported manifest")
+        if self.schema_version != "1.2.0" and self.phase2 is not None:
+            raise ValueError("Phase 2 grants require manifest 1.2")
+        if self.schema_version == "1.2.0":
+            self._validate_phase2()
         if set(self.credential_scopes) != set(self.credential_handles):
             raise ValueError("every credential handle requires one exact scope")
         if any(not operations for operations in self.credential_scopes.values()):
@@ -217,6 +223,27 @@ class AuthorizationManifest(StrictModel):
         if not self.redaction_required:
             raise ValueError("Phase 0 requires redaction")
         return self
+
+    def _validate_phase2(self) -> None:
+        grants = self.phase2
+        if grants is None:
+            raise ValueError("Phase 2 requires explicit phase2 grants")
+        if grants.database_credential_handle in self.credential_handles or any(
+            grants.database_credential_handle in scope for scope in self.credential_scopes.values()
+        ):
+            raise ValueError("the database credential can never be an attack credential")
+        asset_ids = {asset.asset_id for asset in self.assets}
+        if not grants.browser_assets <= asset_ids:
+            raise ValueError("browser assets must be signed assets")
+        signed_tenants = {tenant for asset in self.assets for tenant in asset.tenant_ids}
+        if any(scope.tenant_id not in signed_tenants for scope in grants.ownership):
+            raise ValueError("ownership scopes must name signed tenants")
+        if grants.subresource_origins and not grants.browser_assets:
+            raise ValueError("subresource origins require a browser asset")
+
+    def resource_owner(self, resource_id: str) -> str | None:
+        """Resolve ownership from signed data only. Returns None when nothing is signed."""
+        return self.phase2.owner_of(resource_id) if self.phase2 is not None else None
 
     def signed_bytes(self) -> bytes:
         return self.canonical_bytes(exclude={"signature"})

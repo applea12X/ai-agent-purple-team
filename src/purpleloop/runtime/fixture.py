@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 
 from purpleloop.control.phase1_tools import PHASE1_TOOLS
+from purpleloop.control.tools import ToolRegistry
 from purpleloop.fixture.app import FixtureState, create_apps
 from purpleloop.runtime.runtime import SafetyRuntime
 from purpleloop.schemas.action import ActionRequest, ActionTarget, BudgetRequest, SideEffectClass
@@ -32,16 +33,26 @@ class FixtureController:
     """Control-plane calls use the same runtime, with a separately scoped credential."""
 
     def __init__(
-        self, runtime: SafetyRuntime, manifest: AuthorizationManifest, run_id: str
+        self,
+        runtime: SafetyRuntime,
+        manifest: AuthorizationManifest,
+        run_id: str,
+        *,
+        tools: ToolRegistry = PHASE1_TOOLS,
+        control_asset_id: str = "fixture-control",
+        credential_handle: str = "fixture-control",
     ) -> None:
         self.runtime, self.manifest, self.run_id = runtime, manifest, run_id
+        self.tools = tools
+        self.control_asset_id = control_asset_id
+        self.credential_handle = credential_handle
         self.counter = 0
         self.last_evidence_ids: tuple[str, ...] = ()
 
     async def call(self, operation: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         self.counter += 1
-        definition = PHASE1_TOOLS.lookup("control", f"fixture.{operation}")
-        assets = [a for a in self.manifest.assets if a.asset_id == "fixture-control"]
+        definition = self.tools.lookup("control", f"fixture.{operation}")
+        assets = [a for a in self.manifest.assets if a.asset_id == self.control_asset_id]
         if len(assets) != 1:
             raise ValueError("exact control asset required")
         asset = assets[0]
@@ -56,7 +67,7 @@ class FixtureController:
                 tenant_id="harness",
             ),
             side_effect=definition.side_effect,
-            credential_handle="fixture-control",
+            credential_handle=self.credential_handle,
             idempotency_key=f"control-{self.counter}",
             arguments=arguments or {},
             budget=BudgetRequest(writes=int(definition.side_effect == SideEffectClass.WRITE)),

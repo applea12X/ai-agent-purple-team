@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from typing import Literal
 
-from purpleloop.control.phase1_tools import PHASE1_TOOLS
+from purpleloop.control.lanes import PHASE1_LANE, LaneContract
+from purpleloop.control.phase2_tools import FORBIDDEN_BROWSER_KEYS
 from purpleloop.control.policy import DefaultDenyPolicy
 from purpleloop.schemas.action import ActionRequest, ActionTarget, BudgetRequest, SideEffectClass
 from purpleloop.schemas.authorization import AuthorizationManifest
 from purpleloop.schemas.phase1 import ExecutionPlan, Phase1Scenario, PlanNode, Step
+from purpleloop.schemas.phase2 import BrowserStep
 
 
 class PlanError(ValueError):
@@ -14,16 +16,28 @@ class PlanError(ValueError):
 
 
 def compile_step(
-    step: Step, scenario: Phase1Scenario, manifest: AuthorizationManifest
+    step: Step,
+    scenario: Phase1Scenario,
+    manifest: AuthorizationManifest,
+    *,
+    lane: LaneContract = PHASE1_LANE,
 ) -> ActionRequest:
-    definition = PHASE1_TOOLS.lookup(step.adapter, step.operation)
+    definition = lane.tools.lookup(step.adapter, step.operation)
     assets = [asset for asset in manifest.assets if asset.asset_id == step.asset_id]
     if len(assets) != 1 or step.target_tenant not in assets[0].tenant_ids:
         raise PlanError("unknown asset or unauthorized target tenant")
     asset = assets[0]
-    if step.target_tenant != scenario.actor.tenant_id and step.operation != "record.read":
+    actor = lane.actors.get(scenario.actor.actor_id)
+    if actor is None:
+        raise PlanError("actor does not match the trusted fixture credential binding")
+    if step.target_tenant != actor.tenant_id and step.operation not in lane.cross_tenant_operations:
         raise PlanError("cross-tenant action is not a registered fixture exercise")
-    path = definition.path_template.format(resource_id=step.resource_id or "")
+    resource_id = step.resource_id
+    if resource_id is not None and lane.resource_resolver is not None:
+        resource_id = lane.resource_resolver(scenario.fixture_seed, resource_id)
+    if step.adapter == "browser":
+        compile_browser_steps(step, manifest, lane, resource_id=resource_id)
+    path = definition.path_template.format(resource_id=resource_id or "")
     action = ActionRequest(
         schema_version="1.1.0",
         action_id=step.node_id,
@@ -33,45 +47,86 @@ def compile_step(
         target=ActionTarget(
             url=f"{asset.scheme}://{asset.host}:{asset.port}{path}",
             tenant_id=step.target_tenant,
-            resource_id=step.resource_id,
+            resource_id=resource_id,
         ),
         side_effect=definition.side_effect,
-        credential_handle=scenario.actor.credential_handle,
+        credential_handle=actor.credential_handle,
         idempotency_key=f"{scenario.scenario_id}:{step.node_id}",
         arguments=step.arguments,
         budget=BudgetRequest(
-            requests=1,
+            requests=definition.min_requests,
             writes=int(definition.side_effect == SideEffectClass.WRITE),
             records=definition.min_records,
             tokens=definition.min_tokens,
         ),
     )
-    decision = DefaultDenyPolicy(PHASE1_TOOLS).evaluate(manifest, action)
+    decision = DefaultDenyPolicy(lane.tools).evaluate(manifest, action)
     if not decision.permitted:
         raise PlanError(decision.reason_code)
     return action
 
 
-def compile_plan(scenario: Phase1Scenario, manifest: AuthorizationManifest) -> ExecutionPlan:
+def compile_browser_steps(
+    step: Step,
+    manifest: AuthorizationManifest,
+    lane: LaneContract,
+    *,
+    resource_id: str | None = None,
+) -> tuple[BrowserStep, ...]:
+    """Resolve a browser step into typed navigate/fill/click/read steps, or refuse it.
+
+    Free-form JavaScript, URLs, and selectors are rejected here, before any policy evaluation
+    and long before a browser exists. The expansion comes from the trusted flow registry; the
+    planner only selected a registered operation and supplied typed arguments.
+    """
+    forbidden = FORBIDDEN_BROWSER_KEYS & {key.lower() for key in step.arguments}
+    if forbidden:
+        raise PlanError(f"free-form browser instruction rejected: {sorted(forbidden)}")
+    if manifest.phase2 is None or step.asset_id not in manifest.phase2.browser_assets:
+        raise PlanError("browser asset is not signed for browser use")
+    flow = lane.flows.get(step.operation)
+    if flow is None:
+        raise PlanError("browser operation is not a registered flow")
+    resolved = resource_id if resource_id is not None else step.resource_id
+    try:
+        return flow.expand(step.arguments, resolved)
+    except ValueError as exc:
+        raise PlanError(str(exc)) from exc
+
+
+def compile_plan(
+    scenario: Phase1Scenario,
+    manifest: AuthorizationManifest,
+    *,
+    lane: LaneContract = PHASE1_LANE,
+) -> ExecutionPlan:
     scenario.require_runnable()
-    if (
-        scenario.actor.actor_id,
+    actor = lane.actors.get(scenario.actor.actor_id)
+    if actor is None or (
         scenario.actor.role,
         scenario.actor.tenant_id,
         scenario.actor.credential_handle,
-    ) != ("customer-a", "customer", "tenant-a", "fixture-customer"):
+    ) != (actor.role, actor.tenant_id, actor.credential_handle):
         raise PlanError("actor does not match the trusted fixture credential binding")
-    if manifest.schema_version != "1.1.0" or manifest.phase1 is None:
-        raise PlanError("Phase 1 manifest required")
-    expected_assets = {"fixture-data": 18080, "fixture-control": 18081}
-    if len(manifest.assets) != 2 or any(
-        expected_assets.get(asset.asset_id) != asset.port for asset in manifest.assets
+    if manifest.schema_version not in lane.manifest_versions or manifest.phase1 is None:
+        raise PlanError(f"{lane.name} manifest version required")
+    if scenario.schema_version not in lane.scenario_versions:
+        raise PlanError(f"{lane.name} scenario version required")
+    if lane.requires_phase2:
+        if manifest.phase2 is None:
+            raise PlanError("Phase 2 grants required")
+        if scenario.fixture_seed != manifest.phase2.ownership_seed:
+            raise PlanError("signed ownership is bound to a different fixture seed")
+    if len(manifest.assets) != len(lane.expected_assets) or any(
+        lane.expected_assets.get(asset.asset_id) != asset.port for asset in manifest.assets
     ):
-        raise PlanError("manifest must bind the managed Phase 1 fixture listeners")
+        raise PlanError(f"manifest must bind the managed {lane.name} fixture listeners")
     if scenario.authorization_digest not in {None, manifest.manifest_digest()}:
         raise PlanError("scenario manifest digest mismatch")
     if scenario.defense_profile not in manifest.phase1.defense_profiles:
         raise PlanError("defense not pre-authorized")
+    if scenario.defense_profile not in lane.defenses:
+        raise PlanError("defense is not registered for this lane")
     tagged: list[tuple[Literal["clean", "attack"], Step]] = [
         ("clean", s) for s in scenario.clean_steps
     ] + [("attack", s) for s in scenario.attack_steps]
@@ -79,6 +134,9 @@ def compile_plan(scenario: Phase1Scenario, manifest: AuthorizationManifest) -> E
     intent_slots = sum(s.adapter == "chat" for _, s in tagged)
     if len(set(ids)) != len(ids) or len(ids) + intent_slots > manifest.phase1.max_nodes:
         raise PlanError("duplicate nodes or graph exceeds signed limit")
+    browser_nodes = sum(s.adapter == "browser" for _, s in tagged)
+    if manifest.phase2 is not None and 2 * browser_nodes > manifest.phase2.max_browser_contexts:
+        raise PlanError("paired browser legs exceed the signed context limit")
     pending = {s.node_id: (stage, s) for stage, s in tagged}
     depths: dict[str, int] = {}
     nodes: list[PlanNode] = []
@@ -99,8 +157,22 @@ def compile_plan(scenario: Phase1Scenario, manifest: AuthorizationManifest) -> E
                 PlanNode(
                     node_id=key,
                     stage=stage,
-                    action=compile_step(step, scenario, manifest),
+                    action=compile_step(step, scenario, manifest, lane=lane),
                     depends_on=step.depends_on,
+                    browser_steps=(
+                        compile_browser_steps(
+                            step,
+                            manifest,
+                            lane,
+                            resource_id=(
+                                lane.resource_resolver(scenario.fixture_seed, step.resource_id)
+                                if lane.resource_resolver and step.resource_id
+                                else step.resource_id
+                            ),
+                        )
+                        if step.adapter == "browser"
+                        else None
+                    ),
                 )
             )
     return ExecutionPlan(

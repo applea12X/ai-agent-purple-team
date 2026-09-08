@@ -11,7 +11,8 @@ controls. Phase 1 builds a deterministic closed-loop evaluation on top of that k
 > asset covered by a current, signed authorization manifest. Writes are permitted only for exact
 > registered synthetic fixture operations that a 1.1 manifest explicitly grants. Destructive
 > actions, unknown operations, and targets outside signed scope are always denied. There is no
-> production, browser, or live-model adapter; all model responses come from offline fixtures.
+> production or live-model adapter, and the browser adapter drives only the bundled
+> synthetic fixture; all model responses come from offline fixtures.
 
 ## Setup and verification
 
@@ -37,6 +38,21 @@ PURPLELOOP_CONTAINER_TESTS=1 uv run pytest tests/phase1/test_isolation.py --no-c
 `phase1-demo` is the single offline entry point: it provisions the Phase 1 fixture, runs all five
 scenarios, writes and verifies their report bundles, and tears the fixture down even when the run
 fails. The container lane asserts containment, blocked egress, and control-plane authentication.
+
+Phase 2 adds `supportlab`, a persistent multi-organization SaaS fixture backed by PostgreSQL, and
+a browser surface driven by Playwright:
+
+```console
+make phase2-check
+make supportlab-demo
+PURPLELOOP_CONTAINER_TESTS=1 uv run pytest tests/phase2/test_supportlab_isolation.py --no-cov
+uv run purpleloop supportlab-run scenarios/supportlab/bola-ticket.yaml out/bola --fixture in-process
+```
+
+`supportlab-demo` runs the eighteen-scenario corpus in containers on PostgreSQL, drives the browser
+scenarios through Chromium, writes and verifies every report bundle, and tears the stack down even
+on failure. The deterministic lane runs the same corpus in process against SQLite with an exact
+HTML driver; the two engines produce byte-identical seed hashes.
 
 Building the fixture image pulls `python:3.12-slim` and `ghcr.io/astral-sh/uv` from public
 registries, so the first `phase1-demo` needs network access. Evaluation itself is fully offline
@@ -87,11 +103,28 @@ fails on replay under the same seed, plan, and budget.
 Harness authorization and target vulnerability are independent facts: a permitted harness action
 is never, by itself, evidence that an attack failed.
 
+## Phase 2 architecture
+
+`supportlab` is a persistent, multi-organization SaaS target with six toggleable flaw classes,
+each paired to a registry defense the signed manifest must pre-authorize. Resource ownership is
+resolved from the signed manifest, never from the fixture under test, so harness authorization and
+target vulnerability stay independent even across a database of seeded rows. A `LaneContract`
+parameterizes the one runner over both fixtures. The browser is a first-class adapter under the
+same authority as HTTP and tool adapters: it never selects its own target, every navigation and
+subresource origin is authorized before the request, and scored output comes only from application
+state and typed DOM assertions. Determinism under a real database rests on total query ordering,
+seed-derived identifiers, a banned-nondeterministic-function rule, and a snapshot hash over a
+canonical ordered read; the API lane reports bit-exact replay and the browser lane reports its own
+number separately.
+
 ## Documentation
 
+- [Product requirements and delivery plan](planning/PRD.md) and the
+  [Phase 2 plan](planning/phase2-plan.md)
 - [Architecture](docs/architecture.md) and [threat model](docs/threat-model.md)
 - [Rules of engagement](docs/rules-of-engagement.md)
-- [Phase 1 design](docs/phase1-plan.md) and
+- [Phase 1 design](docs/phase1-plan.md) and [Phase 2 design](docs/phase2-plan.md), and the
   [evaluation methodology](docs/evaluation-methodology.md)
-- Acceptance records: [Phase 0](docs/phase0-acceptance.md), [Phase 1](docs/phase1-acceptance.md)
+- Acceptance records: [Phase 0](docs/phase0-acceptance.md), [Phase 1](docs/phase1-acceptance.md),
+  and [Phase 2](docs/phase2-acceptance.md)
 - Decision records in [docs/adr](docs/adr)

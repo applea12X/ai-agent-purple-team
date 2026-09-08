@@ -5,18 +5,24 @@ from __future__ import annotations
 import json
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import yaml
 from pydantic import Field, JsonValue, model_validator
 
 from purpleloop.schemas.action import ActionRequest, BudgetRequest
 from purpleloop.schemas.common import StrictModel
+from purpleloop.schemas.phase2 import (
+    BrowserStep,
+    EvidenceCompleteness,
+    ResourceReport,
+    Surface,
+)
 from purpleloop.schemas.scenario import Scenario
 
 
 class Versioned(StrictModel):
-    schema_version: Literal["1.1.0"] = "1.1.0"
+    schema_version: Literal["1.1.0", "1.2.0"] = "1.1.0"
 
 
 class Stage(StrEnum):
@@ -37,14 +43,14 @@ class Stage(StrEnum):
 
 class Actor(Versioned):
     actor_id: str
-    role: Literal["customer", "admin"]
+    role: Literal["customer", "agent", "admin"]
     tenant_id: str
     credential_handle: str
 
 
 class Step(Versioned):
     node_id: str
-    adapter: Literal["http", "tool", "chat"]
+    adapter: Literal["http", "tool", "chat", "browser"]
     operation: str
     asset_id: str
     target_tenant: str
@@ -89,12 +95,28 @@ class Phase1Scenario(Versioned):
     license: str = "CC0-1.0"
     conversion_issues: tuple[str, ...] = ()
     legacy_actions: tuple[ActionRequest, ...] | None = None
+    # Scenario 1.2 additions. ``None`` on a 1.1 document keeps its canonical bytes unchanged.
+    surface: Surface | None = None
+    shared_oracle: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
 
     @model_validator(mode="after")
     def validate_steps(self) -> Phase1Scenario:
         if not self.attack_steps and not self.legacy_actions:
             raise ValueError("an attack step is required")
+        browser_steps = any(
+            step.adapter == "browser" for step in (*self.clean_steps, *self.attack_steps)
+        )
+        if browser_steps and self.schema_version != "1.2.0":
+            raise ValueError("browser steps require scenario 1.2")
+        if browser_steps and self.surface not in {"browser", "both"}:
+            raise ValueError("browser steps require a browser surface declaration")
+        if self.surface == "browser" and not browser_steps:
+            raise ValueError("a browser-surface scenario needs a browser step")
         return self
+
+    @property
+    def effective_surface(self) -> Surface:
+        return self.surface or "api"
 
     def require_runnable(self) -> None:
         if (
@@ -114,6 +136,9 @@ class PlanNode(Versioned):
     stage: Literal["clean", "attack"]
     action: ActionRequest
     depends_on: tuple[str, ...]
+    # Resolved typed browser steps for inspection. The adapter re-derives them from the trusted
+    # flow registry; nothing here can name a URL, selector, or script.
+    browser_steps: tuple[BrowserStep, ...] | None = None
 
 
 class ExecutionPlan(Versioned):
@@ -178,7 +203,7 @@ class LegResult(Versioned):
 class RunSummary(Versioned):
     run_id: str
     scenario_id: str
-    status: Literal["passed", "regression", "error", "inconclusive"]
+    status: Literal["passed", "regression", "error", "inconclusive", "not-evaluated"]
     reason: str
     manifest_digest: str
     scenario_digest: str
@@ -197,6 +222,46 @@ class RunSummary(Versioned):
     elapsed_seconds: float = Field(default=0, ge=0)
     tokens_used: int = Field(default=0, ge=0)
     executed_actions: int = Field(default=0, ge=0)
+    # Phase 2 additions, absent from Phase 1 summaries.
+    surface: Surface | None = None
+    lane: str | None = None
+    resources: ResourceReport | None = None
+    evidence_completeness: EvidenceCompleteness | None = None
+    browser_driver: str | None = None
+    browser_artifacts: tuple[str, ...] | None = None
+
+
+SHARED_ORACLES = "oracles.yaml"
+
+
+def scenario_paths(directory: Path) -> list[Path]:
+    """Scenario YAML files in a directory, excluding the shared-oracle catalogue."""
+    return sorted(p for p in directory.glob("*.yaml") if p.name != SHARED_ORACLES)
+
+
+def resolve_shared_oracle(raw: dict[str, Any], directory: Path) -> dict[str, Any]:
+    """Bind a 1.2 scenario's ``shared_oracle`` reference to the exact specification it names.
+
+    Cross-surface scenarios score both surfaces against one oracle. The reference resolves from
+    a sibling ``oracles.yaml``; an inline oracle that disagrees with the shared one is an error
+    rather than a silent override.
+    """
+    name = raw.get("shared_oracle")
+    if name is None:
+        return raw
+    catalogue_path = directory / SHARED_ORACLES
+    if not catalogue_path.exists():
+        raise ValueError(f"shared oracle catalogue missing: {catalogue_path}")
+    catalogue = yaml.safe_load(catalogue_path.read_text())
+    if not isinstance(catalogue, dict) or name not in catalogue:
+        raise ValueError(f"shared oracle is not catalogued: {name}")
+    shared = catalogue[name]
+    if not isinstance(shared, dict) or "security_oracle" not in shared:
+        raise ValueError("a shared oracle entry must define security_oracle")
+    inline = raw.get("security_oracle")
+    if inline is not None and inline != shared["security_oracle"]:
+        raise ValueError("inline security oracle disagrees with the shared oracle")
+    return {**raw, "security_oracle": shared["security_oracle"]}
 
 
 def load_scenario(path: Path) -> Phase1Scenario:
@@ -207,6 +272,8 @@ def load_scenario(path: Path) -> Phase1Scenario:
     )
     if not isinstance(raw, dict):
         raise ValueError("scenario must be an object")
+    if raw.get("schema_version") == "1.2.0":
+        raw = resolve_shared_oracle(raw, path.parent)
     if raw.get("schema_version", "1.0.0") == "1.0.0":
         legacy = Scenario.model_validate(raw)
         return Phase1Scenario(

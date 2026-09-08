@@ -14,6 +14,7 @@ import httpx
 from purpleloop.adapters.base import Adapter, AdapterResult
 from purpleloop.adapters.offline_model import OfflineModelStore
 from purpleloop.control.phase1_tools import PHASE1_TOOLS, ChatArgs, ChatResult
+from purpleloop.control.tools import ToolRegistry
 from purpleloop.schemas.action import ActionRequest, TargetObservation
 
 Authorize = Callable[[TargetObservation], Awaitable[None]]
@@ -28,13 +29,15 @@ class HttpAdapter:
         transports: Mapping[int, httpx.ASGITransport] | None = None,
         timeout: float = 2.0,
         max_bytes: int = 262144,
+        tools: ToolRegistry = PHASE1_TOOLS,
     ) -> None:
         self.transports = dict(transports or {})
         self.timeout = timeout
         self.max_bytes = max_bytes
+        self.tools = tools
 
     async def preflight(self, action: ActionRequest) -> None:
-        PHASE1_TOOLS.require(action)
+        self.tools.require(action)
         if urlsplit(action.target.url).scheme != "http":
             raise ValueError("Phase 1 fixture transport is HTTP only")
 
@@ -96,7 +99,7 @@ class HttpAdapter:
                     continue
                 if status != 200:
                     raise ValueError(f"fixture transport status {status}")
-                definition = PHASE1_TOOLS.require(action)
+                definition = self.tools.require(action)
                 assert definition.output_model is not None
                 result = definition.output_model.model_validate_json(content)
                 return AdapterResult(
@@ -139,7 +142,7 @@ class HttpAdapter:
             await writer.wait_closed()
 
     async def postcondition(self, action: ActionRequest, result: AdapterResult) -> bool:
-        definition = PHASE1_TOOLS.require(action)
+        definition = self.tools.require(action)
         assert definition.output_model is not None
         definition.output_model.model_validate(result.data)
         return True
@@ -191,14 +194,20 @@ class AdapterRegistry:
 
     name = "registry"
 
-    def __init__(self, registrations: tuple[tuple[str, str, Adapter], ...]) -> None:
+    def __init__(
+        self,
+        registrations: tuple[tuple[str, str, Adapter], ...],
+        *,
+        tools: ToolRegistry = PHASE1_TOOLS,
+    ) -> None:
         table = {(name, operation): adapter for name, operation, adapter in registrations}
         if len(table) != len(registrations):
             raise ValueError("duplicate adapter registration")
         self._adapters = MappingProxyType(table)
+        self.tools = tools
 
     def require(self, action: ActionRequest) -> Adapter:
-        PHASE1_TOOLS.require(action)
+        self.tools.require(action)
         try:
             return self._adapters[(action.adapter, action.operation)]
         except KeyError as exc:

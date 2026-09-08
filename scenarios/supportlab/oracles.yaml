@@ -1,0 +1,18 @@
+# Shared oracle specifications for cross-surface scenarios. An API and a browser scenario that
+# reference the same entry are scored by one specification, so agreement is measured not asserted.
+cross-tenant-ticket-org:
+  security_oracle:
+    schema_version: 1.2.0
+    operator: equals
+    source: responses
+    path: [0, value, org_id]
+    expected: org-b
+    comparison: eq
+cross-tenant-document-org:
+  security_oracle:
+    schema_version: 1.2.0
+    operator: equals
+    source: responses
+    path: [0, value, org_id]
+    expected: org-b
+    comparison: eq

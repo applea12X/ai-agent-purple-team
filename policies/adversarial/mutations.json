@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.2.0",
+  "description": "Each mutation of a compiled supportlab attack action must be denied before I/O.",
+  "mutations": [
+    {
+      "name": "foreign-host",
+      "field": "target.url.host",
+      "expect_denied": true
+    },
+    {
+      "name": "unsigned-resource",
+      "field": "target.resource_id",
+      "expect_denied": true
+    },
+    {
+      "name": "ownership-mismatch",
+      "field": "target.tenant_id",
+      "expect_denied": true
+    },
+    {
+      "name": "database-credential",
+      "field": "credential_handle",
+      "expect_denied": true
+    },
+    {
+      "name": "destructive-effect",
+      "field": "side_effect",
+      "expect_denied": true
+    },
+    {
+      "name": "unregistered-arguments",
+      "field": "arguments",
+      "expect_denied": true
+    },
+    {
+      "name": "browser-asset-not-signed",
+      "field": "adapter=browser+asset",
+      "expect_denied": true
+    }
+  ]
+}

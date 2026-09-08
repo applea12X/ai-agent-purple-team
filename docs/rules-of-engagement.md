@@ -26,3 +26,16 @@
 - A passing suite validates the harness invariants and the seeded fixture findings. It does not
   prove a target or model is secure, and harness authorization never makes an application
   authorization failure legitimate.
+
+## Phase 2 additions
+
+- A 1.2 manifest additionally binds `supportlab`: signed resource ownership tied to the seed, a
+  database credential scope no attack credential may reference, browser-capable assets, and signed
+  subresource origins. Resource ownership is resolved from the signed manifest, never from the
+  application under test.
+- Browser steps are typed navigate/fill/click/read operations resolved from a signed flow registry.
+  Free-form JavaScript, arbitrary URLs, and arbitrary selectors are rejected at compile time. Every
+  navigation, redirect, and subresource origin is authorized before the request and charged to the
+  budget; unauthorized origins are recorded as policy denials, never silently dropped.
+- The persistent database joins the internal network with no published ports and per-run synthetic
+  credentials. Attack credentials cannot address it, and reset is verified by snapshot-hash equality.

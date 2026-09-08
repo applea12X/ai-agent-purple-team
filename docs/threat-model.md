@@ -67,3 +67,28 @@ operation. The host-side ingress relay is trusted plumbing: it holds no fixture 
 has a fixed forwarding destination, but it does terminate loopback connections outside the
 isolated network. Detection times are logical ticks, not production latency, and a passing run is
 evidence about these exact fixtures, seeds, and defenses only.
+
+## Phase 2 additions
+
+Phase 2 keeps every control above and adds a persistent multi-organization application and a browser
+surface around the same per-action boundary. The new assets are the seeded database and its
+snapshot hashes, the signed resource-ownership map, the per-run database credential, the internal
+upstream, and the browser trace/screenshot artifacts. The attacker additionally controls the
+browser DOM content, subresource requests the page attempts, the upstream payloads a scenario
+consumes, and the arguments to registered UI flows.
+
+| Threat | Phase 2 control |
+| --- | --- |
+| Confused-deputy ownership across a seeded database | Ownership resolved from the signed manifest only; an unsigned resource or an owner/tenant mismatch is denied before I/O; the fixture's opinion is observed data for the oracle |
+| Database reached by an attack credential | PostgreSQL on the internal network with no published ports and a per-run credential scope that no attack credential can reference; a manifest that names it as an attack handle fails validation |
+| Nondeterminism leaking from a real database | Total query ordering, seed-derived identifiers, banned `now()`/`random()`/`gen_random_uuid()`, and a canonical ordered snapshot hash — each enforced by a test; template reset verified by hash equality |
+| Planner-supplied browser code or navigation | Typed navigate/fill/click/read steps from a signed flow registry; free-form JavaScript, URLs, and selectors rejected at compile time |
+| Browser reaching an unauthorized origin | Every navigation, redirect, and subresource origin authorized before the request; unauthorized origins aborted at the routing layer, recorded as policy denials, and charged to the budget |
+| SSRF and unsafe upstream consumption | The only upstream path is a code-mapped destination; an internal metadata target and a tampered feed are registered flaws whose defended pair is an allowlist or a strict schema |
+| Browser flake read as a security signal | Scored output from application state and typed DOM assertions only; browser-lane replay reported separately from the API lane |
+| Out-of-process browser after a stop | The browser child is killed in the adapter's `finally` path on completion, failure, timeout, budget exhaustion, or cancellation; emergency stop measured separately |
+
+Residual risk is unchanged in kind from Phase 1: adapters remain trusted, the ledger anchor is
+tamper-evident rather than immutable, and a passing run is evidence about these exact fixtures,
+seeds, and defenses only. The browser adds an out-of-process dependency whose bit-level determinism
+is explicitly not claimed; its replay rate is reported on its own.

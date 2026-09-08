@@ -4,11 +4,11 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
+from purpleloop.control.lanes import PHASE1_LANE, LaneContract
 from purpleloop.control.phase1_tools import ChatArgs, ToolIntent
 from purpleloop.control.plan_compiler import compile_plan, compile_step
-from purpleloop.fixture.app import DEFENSES
 from purpleloop.runtime.fixture import FixtureController
 from purpleloop.runtime.replay import replay_fingerprint
 from purpleloop.runtime.runtime import SafetyRuntime
@@ -26,7 +26,22 @@ from purpleloop.schemas.phase1 import (
     Stage,
     Step,
 )
+from purpleloop.schemas.phase2 import BrowserArtifact, ResourceUsage
 from purpleloop.scoring.phase1 import detect, evaluate
+from purpleloop.scoring.phase2 import estimate_resources, evidence_completeness, resource_report
+
+
+class BrowserProbe(Protocol):
+    """Read-only view of what the browser adapter did, for the run summary."""
+
+    @property
+    def driver_name(self) -> str: ...
+
+    @property
+    def contexts_opened(self) -> int: ...
+
+    @property
+    def artifacts(self) -> tuple[BrowserArtifact, ...]: ...
 
 
 class PurpleTeamRunner:
@@ -36,13 +51,18 @@ class PurpleTeamRunner:
         *,
         close: Callable[[], Awaitable[None]],
         stage_hook: Callable[[Stage], Awaitable[None]] | None = None,
+        lane: LaneContract = PHASE1_LANE,
+        browser: BrowserProbe | None = None,
     ) -> None:
         self.runtime = runtime
         self.close = close
         self.stage_hook = stage_hook
+        self.lane = lane
+        self.browser = browser
         self.started = time.monotonic()
         self.snapshots: dict[str, dict[str, Any]] = {}
         self.plan: ExecutionPlan | None = None
+        self.estimate: ResourceUsage | None = None
         self.scenario: Phase1Scenario
         self.manifest: AuthorizationManifest
         self.run_id: str
@@ -133,11 +153,11 @@ class PurpleTeamRunner:
                         node_id=f"{node.node_id}-intent-{dynamic_count}",
                         adapter="tool",
                         operation=intent.operation,
-                        asset_id="fixture-data",
+                        asset_id=self.lane.data_asset_id,
                         target_tenant=self.scenario.actor.tenant_id,
                         arguments=intent.arguments.model_dump(mode="json"),
                     )
-                    compiled = compile_step(step, self.scenario, self.manifest)
+                    compiled = compile_step(step, self.scenario, self.manifest, lane=self.lane)
                     self.record(
                         EventKind.LIFECYCLE,
                         "TOOL_INTENT_COMPILED",
@@ -240,7 +260,14 @@ class PurpleTeamRunner:
             scenario.scenario_id,
             scenario.scenario_version,
         )
-        self.controller = FixtureController(self.runtime, manifest, run_id)
+        self.controller = FixtureController(
+            self.runtime,
+            manifest,
+            run_id,
+            tools=self.lane.tools,
+            control_asset_id=self.lane.control_asset_id,
+            credential_handle=self.lane.control_credential_handle,
+        )
         summary = RunSummary(
             run_id=run_id,
             scenario_id=scenario.scenario_id,
@@ -253,23 +280,23 @@ class PurpleTeamRunner:
         try:
             await self.stage(Stage.ADMISSION)
             self.runtime.verifier.verify(manifest, now=self.runtime.clock())
-            self.plan = compile_plan(scenario, manifest)
+            self.plan = compile_plan(scenario, manifest, lane=self.lane)
             summary = summary.model_copy(update={"plan_digest": self.plan.digest()})
+            if self.lane is not PHASE1_LANE:
+                self.estimate = estimate_resources(self.plan, self.lane)
+                self.record(
+                    EventKind.LIFECYCLE,
+                    "RESOURCE_ESTIMATE",
+                    self.estimate.model_dump(mode="json"),
+                )
             await self.stage(Stage.PROVISION)
             await self.controller.call("provision")
             await self.stage(Stage.SEED)
-            seeded = await self.controller.call(
-                "seed",
-                {
-                    "seed": scenario.fixture_seed,
-                    "scenario_id": scenario.scenario_id,
-                    "capabilities": sorted(scenario.capabilities),
-                },
-            )
+            seeded = await self.controller.call("seed", self.lane.seed_arguments(scenario))
             baseline = await self.leg("baseline", seeded["state_hash"])
             summary = summary.model_copy(update={"baseline": baseline})
             await self.stage(Stage.DEFENSE)
-            applicable, config = DEFENSES[scenario.defense_profile]
+            applicable, config = self.lane.defenses[scenario.defense_profile]
             if (
                 scenario.scenario_id not in applicable
                 or manifest.phase1 is None
@@ -301,7 +328,7 @@ class PurpleTeamRunner:
                     Finding(
                         finding_id=f"{scenario.scenario_id}-seeded",
                         scenario_id=scenario.scenario_id,
-                        asset_id="fixture-data",
+                        asset_id=self.lane.data_asset_id,
                         attacker_goal=scenario.attacker_objective,
                         observed_impact=(
                             f"{scenario.security_oracle.operator}: {baseline.security.observed}"
@@ -382,6 +409,7 @@ class PurpleTeamRunner:
         tokens_used = 0
         executed_actions = 0
         teardown = False
+        completeness = None
         try:
             async with asyncio.timeout(5):
                 try:
@@ -414,12 +442,37 @@ class PurpleTeamRunner:
                     tokens_used += int(output.get("input_tokens", 0)) + int(
                         output.get("output_tokens", 0)
                     )
+            if self.lane is not PHASE1_LANE:
+                completeness = evidence_completeness(events)
         except Exception:
             integrity, event_hash = True, None
+        elapsed = time.monotonic() - self.started
+        phase2_fields: dict[str, Any] = {}
+        if self.lane is not PHASE1_LANE:
+            actual = ResourceUsage(
+                requests=self.runtime.budgets.used.requests,
+                records=self.runtime.budgets.used.records,
+                browser_contexts=self.browser.contexts_opened if self.browser else 0,
+                wall_time_seconds=round(elapsed, 6),
+            )
+            phase2_fields = {
+                "lane": self.lane.name,
+                "surface": self.scenario.effective_surface,
+                "resources": (
+                    resource_report(self.estimate, actual) if self.estimate is not None else None
+                ),
+                "evidence_completeness": completeness,
+                "browser_driver": self.browser.driver_name if self.browser else None,
+                "browser_artifacts": (
+                    tuple(artifact.path for artifact in self.browser.artifacts)
+                    if self.browser
+                    else None
+                ),
+            }
         return summary.model_copy(
             update={
                 "teardown_complete": teardown,
-                "elapsed_seconds": time.monotonic() - self.started,
+                "elapsed_seconds": elapsed,
                 "tokens_used": tokens_used,
                 "executed_actions": executed_actions,
                 "budget_used": self.runtime.budgets.used,
@@ -450,5 +503,6 @@ class PurpleTeamRunner:
                 ),
                 "evidence_integrity_incident": integrity,
                 "status": "error" if integrity or not teardown else summary.status,
+                **phase2_fields,
             }
         )

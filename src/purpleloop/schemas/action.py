@@ -40,11 +40,17 @@ class ActionTarget(StrictModel):
 
 
 class TargetObservation(StrictModel):
-    """Connection metadata produced by a trusted adapter immediately before I/O."""
+    """Connection metadata produced by a trusted adapter immediately before I/O.
+
+    ``kind`` distinguishes a top-level navigation or redirect hop (``document``), which takes
+    part in consecutive hop sequencing, from a browser subresource request (``subresource``),
+    which is authorized against the signed origin allowlist and charged to the run budget.
+    """
 
     url: str
     resolved_addresses: tuple[IPv4Address | IPv6Address, ...] = Field(min_length=1)
     hop_index: int = Field(ge=0)
+    kind: Literal["document", "subresource"] = "document"
 
     @field_validator("url")
     @classmethod
