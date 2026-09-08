@@ -10,7 +10,7 @@ from pydantic import computed_field
 from purpleloop.adapters.base import Adapter, AdapterResult, SubresourceDenied
 from purpleloop.control.budgets import BudgetError, BudgetLedger, Reservation
 from purpleloop.control.credentials import CredentialBroker
-from purpleloop.control.kill_switch import KernelStopped, KillSwitch
+from purpleloop.control.kill_switch import KernelState, KernelStopped, KillSwitch
 from purpleloop.control.manifest import ManifestError, ManifestVerifier
 from purpleloop.control.policy import PolicyEngine
 from purpleloop.control.redaction import Redactor
@@ -292,9 +292,21 @@ class SafetyRuntime:
                 event_hashes=tuple(event_hashes),
             )
         except asyncio.CancelledError:
-            reason_code = "CANCELLED"
-            status = "cancelled"
-            kind = EventKind.TERMINATION
+            # The wall-time deadline cancels the awaiting task; asyncio.timeout normally reports
+            # that as TimeoutError, but under scheduling contention the cancellation can surface
+            # here directly. Classify by cause: an exhausted wall-time budget with the kernel still
+            # running is a wall-time timeout, never an operator/kill-switch cancellation.
+            if (
+                self.kill_switch.state == KernelState.RUNNING
+                and self.budgets.remaining_wall_time <= 0
+            ):
+                reason_code = "WALL_TIME_EXCEEDED"
+                status = "denied"
+                kind = EventKind.BUDGET
+            else:
+                reason_code = "CANCELLED"
+                status = "cancelled"
+                kind = EventKind.TERMINATION
         except TimeoutError:
             reason_code = "WALL_TIME_EXCEEDED"
             status = "denied"
