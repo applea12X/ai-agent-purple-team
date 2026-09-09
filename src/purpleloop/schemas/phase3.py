@@ -379,6 +379,8 @@ class RepetitionSet(StrictModel):
     records: tuple[RepetitionRecord, ...] = ()
     seed_policy: str = Field(default="fixed-per-repetition", max_length=200)
     model_pin_id: str | None = None
+    #: Why a requested repetition produced no record. Reported beside the numbers it reduces.
+    exclusion_reasons: tuple[str, ...] = ()
 
     @property
     def completed(self) -> int:

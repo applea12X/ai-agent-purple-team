@@ -120,7 +120,16 @@ class PurpleTeamRunner:
             raise RuntimeError(result.reason_code)
         return result.result.data, result.event_hashes
 
-    async def execute_steps(self, phase: str) -> tuple[list[dict[str, Any]], tuple[str, ...], bool]:
+    async def execute_steps(
+        self, phase: str, *, variant: str = ""
+    ) -> tuple[list[dict[str, Any]], tuple[str, ...], bool]:
+        """Run one leg's nodes.
+
+        ``variant`` re-runs the same nodes under distinct action and idempotency identities. It
+        exists for the utility-under-attack pass: without it the second run of a clean task would
+        collide with the first on its idempotency key and replay the cached response instead of
+        measuring anything.
+        """
         assert self.plan is not None
         responses: list[dict[str, Any]] = []
         evidence: list[str] = []
@@ -131,6 +140,13 @@ class PurpleTeamRunner:
             if node.stage != phase:
                 continue
             action = node.action
+            if variant:
+                action = action.model_copy(
+                    update={
+                        "action_id": f"{action.action_id}-{variant}",
+                        "idempotency_key": f"{action.idempotency_key}:{variant}",
+                    }
+                )
             if action.adapter == "chat":
                 args = ChatArgs.model_validate(action.arguments)
                 if args.retrieved == "$previous.body":
@@ -222,6 +238,31 @@ class PurpleTeamRunner:
                     responses.append(tool_response)
                     evidence.extend(tool_ids)
         return responses, tuple(evidence), susceptible
+
+    async def utility_under_attack(self, before: dict[str, Any]) -> OracleResult | None:
+        """Re-run the legitimate task after the attack, on the state the attack left behind.
+
+        This is the fourth number, and it has to be measured rather than inferred: the clean task
+        runs before the attack, so nothing in an earlier leg says whether the assistant is still
+        useful once the attack has landed. Only the agent lane runs it; the API and browser lanes
+        keep exactly their Phase 2 shape.
+        """
+        if not self.lane.requires_phase3 or self.scenario.utility_oracle is None:
+            return None
+        responses, evidence, _ = await self.execute_steps("clean", variant="under-attack")
+        state = await self.controller.call("snapshot")
+        result = evaluate(
+            self.scenario.utility_oracle,
+            before=before,
+            state=state["state"],
+            responses=responses,
+            telemetry=[],
+            evidence_ids=evidence,
+        )
+        self.record(
+            EventKind.ORACLE, "UTILITY_UNDER_ATTACK", {"utility": result.model_dump(mode="json")}
+        )
+        return result
 
     def run_judge(
         self,
@@ -426,6 +467,7 @@ class PurpleTeamRunner:
                 "security": security.model_dump(mode="json"),
             },
         )
+        under_attack = await self.utility_under_attack(clean_state["state"])
         judgement = self.run_judge(name, security, responses, events, action_ids)
         await self.stage(Stage.DETECT)
         detectors = detect(
@@ -443,6 +485,7 @@ class PurpleTeamRunner:
             susceptible=susceptible or security.verdict == "true",
             unauthorized_side_effects=sum(bool(e["unauthorized"] and e["write"]) for e in events),
             detectors=detectors,
+            utility_under_attack=under_attack,
             judge=judgement,
             model_calls=sum(1 for response in responses if "model_call" in response),
             cost_microusd=sum(int(response.get("cost_microusd", 0)) for response in responses),

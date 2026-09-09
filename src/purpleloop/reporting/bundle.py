@@ -121,7 +121,8 @@ def reports(directory: Path, summaries: list[RunSummary]) -> None:
             f"elapsed: {summary.elapsed_seconds:.3f}s; cloud cost: $0.</p>"
             f"<p>Reserved resources: {summary.budget_used.requests} requests, "
             f"{summary.budget_used.writes} writes, {summary.budget_used.tokens} token capacity.</p>"
-            f"<p><a href='{prefix}evidence.jsonl'>Redacted evidence</a> · "
+            + advisory_section(summary)
+            + f"<p><a href='{prefix}evidence.jsonl'>Redacted evidence</a> · "
             f"<a href='{prefix}summary.json'>Canonical result</a></p>"
             f"<details><summary>Full results and evidence references</summary>"
             f"<pre>{html.escape(json.dumps(display, indent=2))}</pre></details></section>"
@@ -153,14 +154,97 @@ def reports(directory: Path, summaries: list[RunSummary]) -> None:
         "padding:0 20px;background:#faf8ff;color:#211a32}"
         "section{background:white;padding:24px;margin:24px 0;"
         "border:1px solid #ddd;border-radius:12px}"
+        ".advisory{background:#fff8e6;border:1px dashed #b8860b;border-radius:8px;"
+        "padding:12px 16px;margin:16px 0}"
+        ".advisory h3{margin:0 0 8px;font-size:15px;color:#7a5c00}"
         "pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}a{color:#6531a0}"
         "table{width:100%;border-collapse:collapse}"
         "th,td{text-align:left;padding:12px;border-bottom:1px solid #ddd}</style>"
         "<h1>PurpleLoop · Deterministic evaluation</h1>"
         "<p>Synthetic local fixtures. Findings describe the baseline; "
         "passing means the paired defense blocked that attack and preserved clean utility. "
-        "Detection times use logical ticks.</p>" + "".join(rows) + "</html>",
+        "Detection times use logical ticks.</p>"
+        "<p><strong>Reading this report.</strong> Everything in a white panel is "
+        "<em>deterministic</em>: it comes from a closed-operator oracle over observed state, and "
+        "it is what gates a release. Everything in a yellow dashed panel is <em>advisory</em> — a "
+        "semantic judgement or a repeated stochastic measurement. Advisory figures are recorded "
+        "and reported, and they move no status, no finding, and no gate.</p>"
+        + "".join(rows)
+        + "</html>",
         encoding="utf-8",
+    )
+
+
+def advisory_section(summary: RunSummary) -> str:
+    """Render the advisory half of a result, visually separated from the binding half.
+
+    An advisory number that sits in the same panel as a deterministic one inherits its
+    credibility at a glance, which is exactly the failure this separation exists to prevent.
+    """
+    blocks: list[str] = []
+    judgements = [
+        (name, leg.judge)
+        for name, leg in (("Baseline", summary.baseline), ("Defended replay", summary.replay))
+        if leg is not None and leg.judge is not None
+    ]
+    for name, judgement in judgements:
+        assert judgement is not None
+        blocks.append(
+            f"<p>{html.escape(name)} judgement: <strong>{html.escape(judgement.verdict)}</strong>"
+            f" (rubric {html.escape(judgement.rubric_id)} {html.escape(judgement.rubric_version)},"
+            f" model pin {html.escape(judgement.model_pin_id)},"
+            f" confidence {judgement.confidence:.2f},"
+            f" {judgement.trials} trial(s))"
+            + (
+                f" — abstained: {html.escape(judgement.abstention_reason)}"
+                if judgement.abstention_reason
+                else ""
+            )
+            + "</p>"
+        )
+    report = summary.stochastic
+    if report is not None:
+        figures = [
+            ("Clean utility", report.clean_utility),
+            ("Utility under attack", report.utility_under_attack),
+            ("Attack success", report.attack_success),
+            ("Executed unauthorized side effects", report.executed_unauthorized_side_effects),
+        ]
+        cells = "".join(
+            f"<tr><th>{html.escape(label)}</th><td>{figure.value:.3f}</td>"
+            f"<td>[{figure.ci_low:.3f}, {figure.ci_high:.3f}]</td>"
+            f"<td>{figure.n}</td><td>{figure.excluded}</td>"
+            f"<td>{html.escape(figure.model_pin_id or '—')}</td>"
+            f"<td>{html.escape(figure.seed_policy)}</td></tr>"
+            for label, figure in figures
+        )
+        blocks.append(
+            "<table><thead><tr><th>Measure</th><th>Value</th><th>95% interval</th><th>n</th>"
+            "<th>excluded</th><th>model pin</th><th>seed policy</th></tr></thead>"
+            f"<tbody>{cells}</tbody></table>"
+            "<p>Four separate numbers, never composited. Proportions use a Wilson interval and "
+            "counts a seeded percentile bootstrap; both are rough at this n and are reported with "
+            f"it. Reproducible across repetitions: <strong>{report.reproducible}</strong>.</p>"
+        )
+        if report.repetitions.exclusion_reasons:
+            blocks.append(
+                "<p>Excluded repetitions: "
+                + html.escape(", ".join(report.repetitions.exclusion_reasons))
+                + "</p>"
+            )
+    if summary.proposals:
+        accepted = sum(p.accepted for p in summary.proposals)
+        blocks.append(
+            f"<p>Adaptive attacker: {len(summary.proposals)} proposals, {accepted} compiled, "
+            f"{len(summary.proposals) - accepted} refused. A refusal is evidence about what the "
+            "attacker tried, not a harness error.</p>"
+        )
+    if not blocks:
+        return ""
+    return (
+        "<div class='advisory'><h3>Advisory — not binding, gates nothing</h3>"
+        + "".join(blocks)
+        + "</div>"
     )
 
 
