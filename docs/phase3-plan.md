@@ -117,6 +117,18 @@ and reported beside every number it reduces.
 The HTML report puts advisory content in a visually distinct panel labelled "not binding, gates
 nothing".
 
+## What is tested versus what is claimed
+
+Two claims in this phase were, at first, assertions about code rather than executed facts, and both
+were found by auditing for exactly that. The model plane's runtime guard had no test reaching it,
+because the offline provider reports no endpoint; and `adapters/agent.py` documented a structural
+test that did not exist. Both now execute. The general rule this phase adopted: if a docstring or a
+decision record says a test enforces something, that test must be findable by name.
+
+The residual, deliberate gap is that every model-facing number here came from a deterministic
+stand-in. That is Phase 4 debt (PRD WP4.0), stated in the acceptance record rather than left for a
+reader to infer.
+
 ## Debt cleared from Phase 1 and 2
 
 - `Finding.reproducible` is answered from the repetition set and carries a

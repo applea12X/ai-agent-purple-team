@@ -13,7 +13,7 @@ in this document**, and §"Known limits" says exactly what that costs.
 Command: `make phase3-check`
 
 - Ruff lint and format checks passed; mypy strict passed for 73 source files.
-- **282 tests passed, 2 skipped. Branch-aware coverage 87.75%** against the 85% floor.
+- **337 tests passed, 2 skipped. Branch-aware coverage 88.52%** against the 85% floor.
 
 The two skips are the container-lane isolation test and the Phase 1 container test, both gated
 behind `PURPLELOOP_CONTAINER_TESTS=1`, unchanged from Phase 2.
@@ -187,7 +187,35 @@ Command: `uv run purpleloop agent-demo --repetitions 5`
 ## Defects found and fixed during acceptance
 
 Each was found by a command that failed, and each fix is covered by a test that fails when reverted.
+The first two were found by a deliberate audit *after* the phase was otherwise complete, and both
+were gaps between what this document claimed and what was actually executed.
 
+- **The model plane's runtime enforcement was never executed by a test.** This was the most
+  consequential finding of the phase. The two-plane split (ADR 0008) is Phase 3's headline security
+  claim, and its *schema* enforcement was tested — a model origin cannot coincide with a target
+  asset, target assets stay loopback, an offline engagement grants no endpoint. But its *runtime*
+  path had never run: the offline provider reports no endpoint, so `ModelClient._authorize`
+  returned immediately and `SafetyRuntime.authorize_model` was unreachable. `MODEL_ENDPOINT_NOT_SIGNED`
+  and `MODEL_ENDPOINT_RESOLVES_TO_TARGET` appeared in the source and in no test. The claim that a
+  rebind onto the fixture is refused was therefore an assertion about code I had written rather than
+  a measured fact. `tests/phase3/test_model_plane.py` now executes that path: a signed origin is
+  permitted and charged, an unsigned origin is denied and charged, a signed origin resolving onto a
+  signed target endpoint is refused, an ungranted plane refuses everything, and each decision is
+  recorded as a policy event carrying its resolved addresses.
+- **A module docstring claimed a test that did not exist.** `adapters/agent.py` stated that a test
+  greps it for adapter dispatch and tool paths. No such test existed — the same failure mode as the
+  `AgentToolIntent` docstring below, which makes it a pattern rather than a slip. The test now
+  exists and passes: the agent module imports no adapter, names no tool path, opens exactly one HTTP
+  client, and contains no URL literal at all. Two adjacent invariants were untested for the same
+  reason and are now covered: no registered operation can name an origin, and no exception handler
+  in the provider module falls back to the offline store.
+- **The agent lane had no fault-injection coverage.** Phase 2 injected failure and cancellation at
+  every lifecycle stage; Phase 3 added new adapters, a model call, and a utility-under-attack pass
+  without extending it. All eleven stages are now injected in both raising and cancelled form, plus
+  a mid-leg model-provider failure. Every case tears down, closes the fixture, and retains evidence.
+  One case documented a design decision rather than a defect: cancellation *during* teardown is
+  deliberately recorded rather than propagated, because the cleanup path is shielded so evidence is
+  still flushed.
 - **The redactor masked a numeric decoding parameter.** `max_output_tokens` matched the
   sensitive-key heuristic on the substring "token", so every `MODEL` event recorded `[REDACTED]`
   where a decoding parameter belongs — the same class of defect Phase 2 hit with a flag named
@@ -221,12 +249,19 @@ Each was found by a command that failed, and each fix is covered by a test that 
 
 ## Coverage exclusions
 
-Named here the way `relay.py` and `PlaywrightDriver` were:
-
-- `src/purpleloop/adapters/model_provider.py` — `OpenAICompatibleProvider` executes only in the
-  stochastic lane and is marked `# pragma: no cover`. The offline path and `ModelClient`'s
-  authorization, charging, and record construction are covered.
+- **None new in Phase 3.** `OpenAICompatibleProvider` was initially excluded as "stochastic lane
+  only"; it is now driven through a stub transport and `model_provider.py` measures **100%**
+  statement and branch coverage. Every contract behaviour is exercised against that stub: endpoint
+  authorization before connect, a denied endpoint stopping the request before it is sent, bounded
+  output, token and cost charging, a cap breach failing closed, a redirect refused as a denial
+  rather than followed as a hop, error statuses surfaced, malformed responses refused rather than
+  guessed at, the credential reaching the header and never the record, a deadline cancelling the
+  call, and the pin's decoding parameters and seed actually appearing in the request body.
 - The Phase 2 container and browser exclusions are unchanged.
+
+What the stub cannot cover is a real endpoint's behaviour — latency, rate limiting, partial
+responses, provider-specific error shapes. That is the stochastic lane, and it is Phase 4 debt
+(PRD WP4.0), not a coverage exclusion.
 
 ## Known limits
 

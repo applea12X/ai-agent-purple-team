@@ -51,6 +51,15 @@ downgrade would report a network result as a deterministic one.
 
 A cost of this split is that `ModelClient` is not a registered plan-reachable adapter, so it cannot
 run the shared adapter contract suite by dispatch. Its deadline, cancellation, redaction, bounded
-output, and no-fallback behaviour are covered by dedicated tests instead. That is a deliberate
-exemption recorded here rather than a skipped requirement: making the client plan-reachable would
-require signing a model endpoint as a target asset, which is precisely what this ADR forbids.
+output, and no-fallback behaviour are covered by dedicated tests instead, in
+`tests/phase3/test_model_plane.py`. That is a deliberate exemption recorded here rather than a
+skipped requirement: making the client plan-reachable would require signing a model endpoint as a
+target asset, which is precisely what this ADR forbids.
+
+The guard this ADR describes is exercised by test, not only by inspection: a signed origin is
+permitted and charged; an unsigned origin is denied and charged; a signed origin whose resolution
+lands on a signed target endpoint is refused as `MODEL_ENDPOINT_RESOLVES_TO_TARGET`; a manifest
+granting no model plane refuses every endpoint; and each decision is recorded as a policy event
+carrying its resolved addresses. Those tests were added after the phase was otherwise complete,
+when an audit found the runtime path had never executed — the schema half of the split was tested
+and the runtime half was not.

@@ -94,7 +94,7 @@ class OfflineProvider:
         return response.response, response.input_tokens, response.output_tokens
 
 
-class OpenAICompatibleProvider:  # pragma: no cover - stochastic lane only
+class OpenAICompatibleProvider:
     """OpenAI-compatible chat completions, covering configured APIs, Ollama, and vLLM.
 
     The three profiles differ only in base URL and whether a credential is required, so they share
