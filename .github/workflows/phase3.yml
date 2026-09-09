@@ -1,0 +1,74 @@
+name: phase3
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Nightly, for the stochastic lane only. The deterministic lane runs on every PR.
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deterministic:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        pythonhashseed: [0, 1, 2, 3, 5]
+    env:
+      PYTHONHASHSEED: ${{ matrix.pythonhashseed }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - run: make phase3-check
+      - run: uv run purpleloop judge-report --output-dir artifacts/judge
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase3-deterministic-evidence-${{ matrix.pythonhashseed }}
+          path: artifacts/
+  agent-demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      # Offline: the scripted provider makes no network call and the manifest authorizes no
+      # model endpoint at all, so this lane cannot reach one.
+      - run: uv run purpleloop agent-demo --output-dir artifacts/agent-demo
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase3-agent-demo-evidence
+          path: artifacts/agent-demo/
+  stochastic:
+    # Nightly and manual only. Never on a pull request: real model calls cost money and are not
+    # replayable, and a PR gate must be neither.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      PURPLELOOP_MODEL_API_KEY: ${{ secrets.PURPLELOOP_MODEL_API_KEY }}
+      PURPLELOOP_MODEL_ENDPOINT: ${{ vars.PURPLELOOP_MODEL_ENDPOINT }}
+      PURPLELOOP_MODEL_ID: ${{ vars.PURPLELOOP_MODEL_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      # A missing credential makes this a recorded skip, never a silent fall back to offline.
+      - run: |
+          if [ -z "$PURPLELOOP_MODEL_ENDPOINT" ]; then
+            echo "::notice::PURPLELOOP_MODEL_ENDPOINT is unset; stochastic lane skipped"
+            exit 0
+          fi
+          make agent-stochastic
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase3-stochastic-evidence
+          path: artifacts/

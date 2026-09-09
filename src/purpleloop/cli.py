@@ -128,11 +128,13 @@ def offline_complete(
     typer.echo(response.model_dump_json())
 
 
+from purpleloop.agent_cli import register as register_agent  # noqa: E402
 from purpleloop.phase1_cli import register  # noqa: E402
 from purpleloop.supportlab_cli import register as register_supportlab  # noqa: E402
 
 register(app)
 register_supportlab(app)
+register_agent(app)
 
 if __name__ == "__main__":
     app()

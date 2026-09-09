@@ -7,7 +7,7 @@ alongside ``records``.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from purpleloop.runtime.runner import PurpleTeamRunner
@@ -17,6 +17,21 @@ from purpleloop.schemas.phase3 import RepetitionSet, StochasticReport
 from purpleloop.scoring.phase3 import record_from, reproducibility_basis, stochastic_report
 
 RunnerFactory = Callable[[int], tuple[PurpleTeamRunner, Path]]
+#: How one repetition is executed. Defaults to the runner's own loop; the CLI passes the Inspect
+#: bridge instead, so a demo bundle carries an Inspect log and verifies like every other bundle.
+Execute = Callable[
+    [PurpleTeamRunner, Phase1Scenario, AuthorizationManifest, str, Path], Awaitable[RunSummary]
+]
+
+
+async def _default_execute(
+    runner: PurpleTeamRunner,
+    scenario: Phase1Scenario,
+    manifest: AuthorizationManifest,
+    run_id: str,
+    directory: Path,
+) -> RunSummary:
+    return await runner.run(scenario, manifest, run_id=run_id, output_dir=directory)
 
 
 async def run_repetitions(
@@ -27,10 +42,12 @@ async def run_repetitions(
     repetitions: int,
     run_id: str,
     seed_policy: str = "fixed-per-repetition",
+    execute: Execute | None = None,
 ) -> tuple[StochasticReport, list[RunSummary]]:
     """Run ``repetitions`` independent evaluations and aggregate them."""
     if repetitions < 1:
         raise ValueError("at least one repetition is required")
+    runner_execute = execute or _default_execute
     pin_id = manifest.phase3.model_pins[0].pin_id if manifest.phase3 else None
     summaries: list[RunSummary] = []
     exclusions: list[str] = []
@@ -38,9 +55,7 @@ async def run_repetitions(
         runner, directory = factory(index)
         try:
             summaries.append(
-                await runner.run(
-                    scenario, manifest, run_id=f"{run_id}-{index}", output_dir=directory
-                )
+                await runner_execute(runner, scenario, manifest, f"{run_id}-{index}", directory)
             )
         except Exception as exc:  # noqa: BLE001 -- an excluded repetition is data, not a crash
             # Recorded with its reason and reported beside every number it reduces. Dropping it

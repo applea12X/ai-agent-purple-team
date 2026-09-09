@@ -96,8 +96,8 @@ class Phase1Scenario(Versioned):
     capabilities: frozenset[str]
     clean_steps: tuple[Step, ...]
     attack_steps: tuple[Step, ...]
-    security_oracle: OracleSpec | None
-    utility_oracle: OracleSpec | None
+    security_oracle: OracleSpec | None = None
+    utility_oracle: OracleSpec | None = None
     expected_telemetry: tuple[str, ...]
     defense_profile: str
     reset: ResetSpec = ResetSpec()
@@ -197,7 +197,9 @@ class DetectorResult(Versioned):
     expected: bool
     observed: bool
     evidence_ids: tuple[str, ...]
-    time_to_detect: int | None
+    # Defaults to None so the field survives an ``exclude_none`` bundle round-trip. A rule that
+    # was expected and never fired has no detection time, and a bundle must still reload.
+    time_to_detect: int | None = None
 
 
 class DefenseSelection(Versioned):
