@@ -86,6 +86,21 @@ class ModelPin(StrictModel):
     model_version: str | None = Field(default=None, max_length=200)
     decoding: DecodingParameters = DecodingParameters()
     system_prompt_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    #: Published price, in micro-USD per 1,000 tokens. Zero for a local profile, which costs
+    #: nothing per token; the estimate-versus-actual check then reports a true zero rather than
+    #: an unmeasured blank.
+    price_input_microusd_per_1k: int = Field(default=0, ge=0, le=10_000_000)
+    price_output_microusd_per_1k: int = Field(default=0, ge=0, le=10_000_000)
+
+    def cost_microusd(self, input_tokens: int, output_tokens: int) -> int:
+        """Cost of one call, rounded up so an estimate is never optimistic by rounding."""
+        return -(
+            -(
+                input_tokens * self.price_input_microusd_per_1k
+                + output_tokens * self.price_output_microusd_per_1k
+            )
+            // 1000
+        )
 
     @field_validator("pin_id")
     @classmethod

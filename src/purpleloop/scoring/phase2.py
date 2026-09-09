@@ -41,6 +41,9 @@ KIND_FIELDS: dict[EventKind, tuple[str, ...]] = {
     EventKind.DETECTOR: ("reason_code", "data.results"),
     EventKind.DEFENSE: ("reason_code", "data.profile", "data.verified"),
     EventKind.TERMINATION: ("reason_code", "data.status", "data.teardown_complete"),
+    EventKind.MODEL: ("reason_code", "data.call", "data.retrieved", "data.quarantined"),
+    EventKind.JUDGE: ("reason_code", "data.verdict", "data.provenance", "data.rubric_id"),
+    EventKind.PROPOSAL: ("reason_code", "data.accepted", "data.operation"),
 }
 
 

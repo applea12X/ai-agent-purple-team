@@ -20,6 +20,12 @@ class EventKind(StrEnum):
     ADAPTER = "adapter"
     RESULT = "result"
     TERMINATION = "termination"
+    # Phase 3. A MODEL event records a pinned model call and the provenance of what it was shown;
+    # a JUDGE event records an advisory semantic judgement; a PROPOSAL event records one adaptive
+    # attacker proposal and the decision on it.
+    MODEL = "model"
+    JUDGE = "judge"
+    PROPOSAL = "proposal"
 
 
 class EvidenceEvent(StrictModel):

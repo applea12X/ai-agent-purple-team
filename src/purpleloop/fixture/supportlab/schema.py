@@ -85,6 +85,53 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     is_write INTEGER NOT NULL,
     is_blocked INTEGER NOT NULL
 )""",
+    """CREATE TABLE chunks (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL REFERENCES orgs (id),
+    source_kind TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    trust_level TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    body TEXT NOT NULL,
+    seq INTEGER NOT NULL
+)""",
+    """CREATE TABLE memory (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL REFERENCES orgs (id),
+    actor_id TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    body TEXT NOT NULL,
+    trust_level TEXT NOT NULL,
+    seq INTEGER NOT NULL
+)""",
+    """CREATE TABLE emails (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL REFERENCES orgs (id),
+    sender_id TEXT NOT NULL,
+    destination TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    body_digest TEXT NOT NULL,
+    canary_exposed INTEGER NOT NULL,
+    is_external INTEGER NOT NULL,
+    seq INTEGER NOT NULL
+)""",
+    """CREATE TABLE crm_records (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL REFERENCES orgs (id),
+    subject_id TEXT NOT NULL,
+    field TEXT NOT NULL,
+    value TEXT NOT NULL,
+    seq INTEGER NOT NULL
+)""",
+    """CREATE TABLE agent_runs (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    retrieved TEXT NOT NULL,
+    untrusted_chunks INTEGER NOT NULL,
+    seq INTEGER NOT NULL
+)""",
     """CREATE TABLE meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL

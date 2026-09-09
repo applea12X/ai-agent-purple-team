@@ -37,8 +37,9 @@ from purpleloop.control.phase2_tools import (
     TicketUpdateArgs,
     UserUpdateArgs,
 )
+from purpleloop.fixture.supportlab import agent_seed, ui
 from purpleloop.fixture.supportlab import seed as seeding
-from purpleloop.fixture.supportlab import ui
+from purpleloop.fixture.supportlab.agent_api import Helpers, register_agent_routes
 from purpleloop.fixture.supportlab.database import Database, SqliteDatabase
 from purpleloop.fixture.supportlab.upstream import FEEDS, TARGETS, create_upstream_app
 from purpleloop.schemas.common import digest_data
@@ -95,6 +96,15 @@ class SupportlabState:
 
     def flag(self, name: str) -> bool:
         return bool(self.configuration.get(name, False))
+
+    @property
+    def agent_surface(self) -> bool:
+        """True only for an agent-lane scenario, which is what widens the scored projection."""
+        return self.seed_args is not None and self.seed_args.surface == "agent"
+
+    def capabilities(self) -> frozenset[str]:
+        """The task's declared capability set, as recorded at seed time."""
+        return frozenset(self.seed_args.capabilities) if self.seed_args is not None else frozenset()
 
     def dispose(self) -> None:
         self.database.teardown()
@@ -687,7 +697,10 @@ def create_apps(state: SupportlabState) -> tuple[FastAPI, FastAPI]:
             if not db.provisioned:
                 raise HTTPException(409, "fixture not provisioned")
             db.provision()
-            seeding.apply(db, args.seed)
+            rows = seeding.apply(db, args.seed)
+            if args.surface == "agent":
+                agent_seed.apply(db, args.seed, rows)
+                db.materialize()
             state.seed_args = args
             state.configuration = {}
             state.flash.clear()
@@ -710,7 +723,7 @@ def create_apps(state: SupportlabState) -> tuple[FastAPI, FastAPI]:
             return result({"events": db.telemetry() if db.seeded else []})
         elif operation != "snapshot":
             raise HTTPException(404, "unknown control operation")
-        snapshot = db.snapshot() if db.seeded else {}
+        snapshot = db.snapshot(agent=state.agent_surface) if db.seeded else {}
         return result(
             {
                 "state": snapshot,
@@ -722,6 +735,19 @@ def create_apps(state: SupportlabState) -> tuple[FastAPI, FastAPI]:
             }
         )
 
+    register_agent_routes(
+        data,
+        db,
+        Helpers(
+            actor=actor,
+            result=result,
+            idempotent=idempotent,
+            finish=finish,
+            audit=audit,
+            flag=state.flag,
+            capabilities=state.capabilities,
+        ),
+    )
     return data, control
 
 

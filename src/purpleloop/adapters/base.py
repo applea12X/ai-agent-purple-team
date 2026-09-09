@@ -6,6 +6,10 @@ from typing import Any, Protocol
 from purpleloop.schemas.action import ActionRequest, TargetObservation
 from purpleloop.schemas.common import StrictModel
 
+#: The runtime's target guard, injected into every adapter execution. Named once so adapters
+#: and their collaborators refer to one type rather than restating the signature.
+Authorize = Callable[[TargetObservation], Awaitable[None]]
+
 
 class AdapterResult(StrictModel):
     status: str
