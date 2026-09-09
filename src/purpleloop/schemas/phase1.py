@@ -119,7 +119,10 @@ class Phase1Scenario(Versioned):
 
     @model_validator(mode="after")
     def validate_steps(self) -> Phase1Scenario:
-        if not self.attack_steps and not self.legacy_actions:
+        if not self.attack_steps and not self.legacy_actions and not self.conversion_issues:
+            # A scenario with no attack step is allowed only when it records why it has none --
+            # that is what an imported, not-yet-authored case is. ``require_runnable`` still
+            # refuses it, and ``compile_plan`` calls that first, so nothing can execute.
             raise ValueError("an attack step is required")
         browser_steps = any(
             step.adapter == "browser" for step in (*self.clean_steps, *self.attack_steps)

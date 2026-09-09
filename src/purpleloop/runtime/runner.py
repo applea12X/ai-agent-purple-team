@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
+from purpleloop.control.attacker import BoundedAttacker
 from purpleloop.control.lanes import PHASE1_LANE, LaneContract
 from purpleloop.control.phase1_tools import ChatArgs, ToolIntent
 from purpleloop.control.phase3_tools import INTENT_ADAPTERS, AgentToolIntent
@@ -28,7 +29,7 @@ from purpleloop.schemas.phase1 import (
     Step,
 )
 from purpleloop.schemas.phase2 import BrowserArtifact, ResourceUsage
-from purpleloop.schemas.phase3 import require_binding
+from purpleloop.schemas.phase3 import ProposalRecord, require_binding
 from purpleloop.scoring.phase1 import detect, evaluate
 from purpleloop.scoring.phase2 import estimate_resources, evidence_completeness, resource_report
 
@@ -55,12 +56,15 @@ class PurpleTeamRunner:
         stage_hook: Callable[[Stage], Awaitable[None]] | None = None,
         lane: LaneContract = PHASE1_LANE,
         browser: BrowserProbe | None = None,
+        attacker: BoundedAttacker | None = None,
     ) -> None:
         self.runtime = runtime
         self.close = close
         self.stage_hook = stage_hook
         self.lane = lane
         self.browser = browser
+        self.attacker = attacker
+        self.proposals: list[ProposalRecord] = []
         self.started = time.monotonic()
         self.snapshots: dict[str, dict[str, Any]] = {}
         self.plan: ExecutionPlan | None = None
@@ -215,6 +219,60 @@ class PurpleTeamRunner:
                     evidence.extend(tool_ids)
         return responses, tuple(evidence), susceptible
 
+    async def run_proposals(
+        self, start_budget: BudgetRequest
+    ) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
+        """Run the bounded attacker's proposals, recording every decision.
+
+        A rejected proposal is evidence about what the attacker tried and what the kernel refused;
+        it is never a harness error, and it never stops the leg.
+        """
+        responses: list[dict[str, Any]] = []
+        evidence: list[str] = []
+        if self.attacker is None:
+            return responses, tuple(evidence)
+        for proposal in self.attacker.proposals():
+            step = Step(
+                node_id=f"proposal-{proposal.index}",
+                adapter=cast(
+                    'Literal["http", "tool", "chat", "browser", "agent"]',
+                    BoundedAttacker.adapter_for(proposal.operation),
+                ),
+                operation=proposal.operation,
+                asset_id=self.lane.data_asset_id,
+                target_tenant=proposal.target_tenant,
+                resource_id=proposal.resource_id,
+                arguments=proposal.arguments,
+            )
+            accepted, reason, compiled = True, "PROPOSAL_ACCEPTED", None
+            try:
+                compiled = compile_step(step, self.scenario, self.manifest, lane=self.lane)
+            except ValueError as exc:
+                accepted, reason = False, str(getattr(exc, "reason_code", exc))[:64]
+            record = ProposalRecord(
+                proposal_index=proposal.index,
+                depth=proposal.depth,
+                operation=proposal.operation,
+                accepted=accepted,
+                reason_code=reason,
+                node_id=step.node_id if accepted else None,
+            )
+            self.proposals.append(record)
+            self.record(EventKind.PROPOSAL, reason, record.model_dump(mode="json"))
+            if compiled is None:
+                continue
+            try:
+                self.check_leg_budget(start_budget, compiled.budget, "attack")
+            except ValueError:
+                self.record(
+                    EventKind.PROPOSAL, "PROPOSAL_BUDGET_EXHAUSTED", record.model_dump(mode="json")
+                )
+                break
+            response, ids = await self.action(compiled)
+            responses.append(response)
+            evidence.extend(ids)
+        return responses, tuple(evidence)
+
     def max_intents_per_turn(self) -> int:
         """The signed per-turn intent cap. A literal here would be an unreviewed authority grant."""
         return self.manifest.phase3.max_tool_intents_per_turn if self.manifest.phase3 else 1
@@ -296,7 +354,11 @@ class PurpleTeamRunner:
         clean_telemetry = await self.controller.call("telemetry")
         first_attack_tick = len(clean_telemetry["events"]) + 1
         await self.stage(Stage.ATTACK if name == "baseline" else Stage.REPLAY)
+        attack_start = self.runtime.budgets.used
         responses, action_ids, susceptible = await self.execute_steps("attack")
+        extra, extra_ids = await self.run_proposals(attack_start)
+        responses.extend(extra)
+        action_ids = (*action_ids, *extra_ids)
         after = await self.controller.call("snapshot")
         snapshot_ids = self.controller.last_evidence_ids
         self.snapshots[f"{name}-after"] = after
@@ -463,6 +525,7 @@ class PurpleTeamRunner:
                     "mitigation_effective": effective,
                     "utility_regression": regression,
                     "findings": findings,
+                    "proposals": tuple(self.proposals),
                 }
             )
         except asyncio.CancelledError:
