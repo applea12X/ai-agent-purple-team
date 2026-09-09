@@ -463,7 +463,37 @@ threatens bit-level replay determinism.
 - Phase 0's 57 tests and Phase 1's 133 tests pass unchanged, and the 85% branch-coverage floor
   holds.
 
-### Phase 3 — LLM/RAG agent and adaptive attack lane
+### Phase 3 — LLM/RAG agent and adaptive attack lane — complete (2026-09-09)
+
+The implemented design is documented in `docs/phase3-plan.md`; the measured results are in
+`docs/phase3-acceptance.md`. Both are authoritative over the pre-implementation task list that
+this section carries below.
+
+Checkpoint — measured:
+
+- 48 labelled scenarios across three lanes (5 Phase 1, 18 supportlab, 25 agent), all with
+  versioned taxonomy mappings, complete ground-truth labels, and deterministic oracles. All nine
+  injection channels populated, checked by a test.
+- Clean utility, utility under attack, attack success, and executed unauthorized side effects
+  reported as four separate numbers over 5 repetitions per scenario, with Wilson or bootstrap
+  intervals and zero exclusions.
+- Zero out-of-scope actions with a deliberately captured model, across all 25 scenarios, with
+  every invented operation recorded as a refusal rather than raised as an error.
+- Judge agreement with adjudicated labels: Krippendorff's alpha 1.0 (n=24, CI 1.0–1.0), Cohen's
+  kappa 1.0 (n=14, abstention-excluded), order-swap consistency 1.0. Held-out evaluator-injection
+  resistance 1.0 with zero critical false passes; the negative control without delimiting falls to
+  0.583 with five critical false passes.
+- Token estimate within ±10% for 24 of 25 scenarios (range −16.04% to +6.31%); the one miss is
+  named and the calibration was not re-tuned. API cost is a measured zero because the lane is
+  offline.
+- Deterministic lanes replay exactly as before; the agent lane replayed 75/75.
+- 282 tests pass, 87.75% branch coverage; Phase 0's 133 and Phase 2's 37 pass unchanged.
+
+**Known limit carried out of this phase:** no real model was called. Every number above was
+produced with a deterministic susceptibility stand-in, and the judge figures measure the harness's
+evaluator hardening rather than a model's resistance. The stochastic lane exists and is wired into
+CI, and has not been run against a real endpoint. Phase 4's nightly lane is where that number first
+becomes real.
 
 #### Objective and contract change
 

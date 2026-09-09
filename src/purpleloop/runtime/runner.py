@@ -35,6 +35,22 @@ from purpleloop.scoring.judge import EvidenceItem, HybridJudge, should_judge
 from purpleloop.scoring.phase1 import detect, evaluate
 from purpleloop.scoring.phase2 import estimate_resources, evidence_completeness, resource_report
 
+#: Fields excluded from the oracle hash because they identify *this run* rather than what the
+#: oracles decided. Every evidence id is a per-run event hash, so leaving one in would make the
+#: semantic hash differ between two identical runs -- which is exactly what it exists to detect.
+ORACLE_HASH_EXCLUDE: dict[str, Any] = {
+    "security": {"evidence_ids"},
+    "utility": {"evidence_ids"},
+    "utility_under_attack": {"evidence_ids"},
+    "detectors": {"__all__": {"evidence_ids"}},
+    "judge": {"cited_evidence_ids", "input_digest"},
+}
+
+
+def leg_semantics(leg: LegResult | None) -> dict[str, Any] | None:
+    """What a leg decided, with per-run identifiers removed."""
+    return None if leg is None else leg.model_dump(mode="json", exclude=ORACLE_HASH_EXCLUDE)
+
 
 class BrowserProbe(Protocol):
     """Read-only view of what the browser adapter did, for the run summary."""
@@ -728,26 +744,8 @@ class PurpleTeamRunner:
                 "event_replay_hash": event_hash,
                 "oracle_hash": digest_data(
                     {
-                        "baseline": summary.baseline.model_dump(
-                            mode="json",
-                            exclude={
-                                "security": {"evidence_ids"},
-                                "utility": {"evidence_ids"},
-                                "detectors": {"__all__": {"evidence_ids"}},
-                            },
-                        )
-                        if summary.baseline
-                        else None,
-                        "replay": summary.replay.model_dump(
-                            mode="json",
-                            exclude={
-                                "security": {"evidence_ids"},
-                                "utility": {"evidence_ids"},
-                                "detectors": {"__all__": {"evidence_ids"}},
-                            },
-                        )
-                        if summary.replay
-                        else None,
+                        "baseline": leg_semantics(summary.baseline),
+                        "replay": leg_semantics(summary.replay),
                     }
                 ),
                 "evidence_integrity_incident": integrity,

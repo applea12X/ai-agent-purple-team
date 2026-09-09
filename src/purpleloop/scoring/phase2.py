@@ -47,6 +47,20 @@ KIND_FIELDS: dict[EventKind, tuple[str, ...]] = {
 }
 
 
+#: Per-reason overrides. An ORACLE event is emitted for two different things: the paired scoring,
+#: which decides both utility and security, and the utility-under-attack pass, which decides only
+#: utility. Requiring a security field on the second would either fail honestly or invite a null
+#: placeholder, and a placeholder is exactly how a completeness metric becomes decorative.
+REASON_FIELDS: dict[tuple[EventKind, str], tuple[str, ...]] = {
+    (EventKind.ORACLE, "UTILITY_UNDER_ATTACK"): ("reason_code", "data.utility"),
+}
+
+
+def required_fields(event: EvidenceEvent) -> tuple[str, ...]:
+    override = REASON_FIELDS.get((event.kind, event.reason_code or ""))
+    return override if override is not None else KIND_FIELDS.get(event.kind, ())
+
+
 def _present(event: EvidenceEvent, name: str) -> bool:
     if name.startswith("data."):
         value: Any = event.data
@@ -69,7 +83,7 @@ def evidence_completeness(events: Sequence[EvidenceEvent]) -> EvidenceCompletene
     present = 0
     missing: list[str] = []
     for event in events:
-        names = list(REQUIRED_EVENT_FIELDS) + list(KIND_FIELDS.get(event.kind, ()))
+        names = list(REQUIRED_EVENT_FIELDS) + list(required_fields(event))
         if event.sequence > 0:
             names.append("parent_hash")
         for name in names:

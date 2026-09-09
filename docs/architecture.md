@@ -129,3 +129,32 @@ the run budget. Fresh context per leg, downloads disabled, fixed viewport/locale
 frozen. Scored output derives only from application state and typed DOM assertions. The browser
 process is killed in the adapter's `finally` path, and browser-lane emergency stop is measured
 separately from Phase 0's in-process cancellation because a browser is an out-of-process child.
+
+
+## Phase 3: the model plane and the provenance boundary
+
+Phase 3 adds two structural elements and changes no authority.
+
+**A second plane.** Until Phase 3 every network destination was a signed target asset on loopback,
+and the fixture had no egress at all. A model lives on a network, so it gets its own plane: an exact
+signed origin in `phase3.model_assets`, disjoint from every target asset by schema validation,
+reached only by `ModelClient` through `SafetyRuntime.authorize_model`. The fixture's containment is
+untouched — Phase 3 did not edit a line of the Phase 2 compose contract — and the fixture never
+calls a model; the harness calls on its behalf and hands the result back as data.
+
+The model plane is deliberately **not plan-addressable**. A model endpoint is never a signed target
+asset, so no compiled action can aim at one: a captured planner has no asset id that resolves to the
+model endpoint. Only a trusted collaborator inside an adapter can raise a model observation, and the
+runtime authorizes the exact origin, refuses a resolution that lands on a signed target endpoint,
+and charges the request whether it is permitted or denied. See ADR 0008.
+
+**A provenance boundary inside a single run.** Deterministic, advisory, and pinned-stochastic
+verdicts now coexist in one summary. `VerdictProvenance` is required on every scored artifact and
+`require_binding()` guards run status, mitigation credit, and the corpus metric. The trusted
+computing base is unchanged: the judge, the attacker, and the model are all in the untrusted or
+fallible column, and none of them can move a binding number. See ADR 0009.
+
+The agent surface itself introduces no new authority. The assistant parses intents; every intent is
+validated against its typed argument model, compiled from a closed operation vocabulary that lives
+in trusted registry code, and executed one at a time by `SafetyRuntime` under the signed per-turn
+cap. An intent has no field that could name an adapter, a target, a credential, or a budget.

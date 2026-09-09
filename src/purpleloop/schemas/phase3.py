@@ -91,6 +91,12 @@ class ModelPin(StrictModel):
     #: an unmeasured blank.
     price_input_microusd_per_1k: int = Field(default=0, ge=0, le=10_000_000)
     price_output_microusd_per_1k: int = Field(default=0, ge=0, le=10_000_000)
+    #: Declared per-call expectations for the pre-run estimate, calibrated once from a measured
+    #: run and then held fixed -- the same discipline as ``ResourceCalibration``. When either is
+    #: zero the estimator falls back to ``max_output_tokens`` as an explicit upper bound, and the
+    #: report says the estimate is a bound rather than an expectation.
+    expected_input_tokens_per_call: int = Field(default=0, ge=0, le=1_000_000)
+    expected_output_tokens_per_call: int = Field(default=0, ge=0, le=1_000_000)
 
     def cost_microusd(self, input_tokens: int, output_tokens: int) -> int:
         """Cost of one call, rounded up so an estimate is never optimistic by rounding."""

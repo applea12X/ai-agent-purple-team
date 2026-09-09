@@ -1,9 +1,10 @@
 # Phase 3 implementation plan — LLM/RAG agent and adaptive attack lane
 
-**Status: proposed.** Section 8, Phase 3 of [PRD.md](PRD.md) is authoritative; where this document
-and the PRD disagree, the PRD wins. On completion this plan is superseded by an as-built design
-note (`docs/phase3-plan.md`, matching the Phase 1 and Phase 2 pattern) and a measured record in
-`docs/phase3-acceptance.md`.
+**Status: implemented (2026-09-09).** This working plan is superseded by the as-built design note
+[docs/phase3-plan.md](../docs/phase3-plan.md) and the measured record in
+[docs/phase3-acceptance.md](../docs/phase3-acceptance.md). It is retained for its rationale.
+Section 8, Phase 3 of [PRD.md](PRD.md) is authoritative; where this document and the PRD disagree,
+the PRD wins.
 
 ---
 

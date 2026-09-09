@@ -157,6 +157,11 @@ def supportlab_agent_manifest(
         model_version="scripted-v1",
         decoding=DecodingParameters(seed=seed),
         system_prompt_hash=SYSTEM_PROMPT_HASH,
+        # Calibrated once, on 2026-09-09, over 150 model calls across the 25-scenario corpus:
+        # input mean 187 (range 143-258), output mean 27 (range 19-60). Held fixed from here; the
+        # delta against actual is reported whether it passes or misses.
+        expected_input_tokens_per_call=187,
+        expected_output_tokens_per_call=27,
     )
     judge_pin = ModelPin(
         pin_id=JUDGE_PIN,

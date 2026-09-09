@@ -299,6 +299,12 @@ def register(app: typer.Typer) -> None:
                 if not runs:
                     raise RuntimeError(f"{scenario.scenario_id}: every repetition was excluded")
                 names.extend(bundle_name(scenario.scenario_id, index) for index in range(len(runs)))
+                # The aggregate belongs to the scenario, not to any one repetition's bundle.
+                # Written before the inventory so the suite's digests cover it.
+                write_json(
+                    root / "stochastic" / f"{scenario.scenario_id}.json",
+                    report.model_dump(mode="json"),
+                )
                 summaries.append(apply_reproducibility(runs[0], report))
                 typer.echo(
                     f"{path.stem}: {summaries[-1].status} (n={report.repetitions.completed})"

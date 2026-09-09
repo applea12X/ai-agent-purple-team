@@ -171,16 +171,32 @@ def reproducibility_basis(report: StochasticReport) -> str:
     return f"{completed} repetitions disagreed on the security verdict"
 
 
-def estimate_tokens(pin: ModelPin, *, model_calls: int, prompt_chars: int) -> tuple[int, int]:
-    """Pre-run token and cost estimate for a scenario, from the pin's own declared price.
+def estimate_tokens(
+    pin: ModelPin, *, model_calls: int, prompt_chars: int | None = None
+) -> tuple[int, int]:
+    """Pre-run token and cost estimate for a scenario, from the pin's own declared figures.
 
-    A crude but stated proxy: four characters per input token and the pin's maximum output. It is
-    reported against actual with the same tolerance as every other resource, so an estimate that
-    is wrong shows up as a delta rather than as silence.
+    When the pin declares per-call expectations -- calibrated once from a measured run and then
+    held fixed, the same discipline ``ResourceCalibration`` uses for wall time -- the estimate is
+    an expectation. When it does not, the estimate falls back to four characters per input token
+    and the decoding cap for output, which is an explicit **upper bound**: using a cap as an
+    expectation guarantees an overestimate, and the report must say which of the two it is.
+
+    Either way the result is reported against actual as a delta rather than as silence, and the
+    declared figures are never re-tuned to make a particular run land inside a threshold.
     """
-    input_tokens = model_calls * max(1, prompt_chars // 4)
-    output_tokens = model_calls * pin.decoding.max_output_tokens
+    if pin.expected_input_tokens_per_call and pin.expected_output_tokens_per_call:
+        input_tokens = model_calls * pin.expected_input_tokens_per_call
+        output_tokens = model_calls * pin.expected_output_tokens_per_call
+    else:
+        input_tokens = model_calls * max(1, (prompt_chars or 0) // 4)
+        output_tokens = model_calls * pin.decoding.max_output_tokens
     return input_tokens + output_tokens, pin.cost_microusd(input_tokens, output_tokens)
+
+
+def estimate_is_a_bound(pin: ModelPin) -> bool:
+    """True when the estimate is an upper bound rather than an expectation."""
+    return not (pin.expected_input_tokens_per_call and pin.expected_output_tokens_per_call)
 
 
 def token_accounting(
