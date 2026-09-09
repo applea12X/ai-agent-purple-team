@@ -140,28 +140,35 @@ class AgentAdapter:
         return dict(body.get("value") or {})
 
     @staticmethod
-    def parse_intents(text: str, limit: int) -> tuple[str, tuple[AgentToolIntent, ...]]:
-        """Parse the reply. Anything that is not a typed intent is dropped, never guessed at.
+    def parse_intents(
+        text: str, limit: int, *, scanned: int = 32
+    ) -> tuple[str, tuple[AgentToolIntent, ...], tuple[str, ...]]:
+        """Parse the reply into typed intents and a list of what was refused.
 
-        The operation vocabulary is closed and lives in trusted code, so an operation the model
-        invents fails validation here and never becomes a compiled action.
+        Validation happens before the per-turn cap is applied, so a model cannot smuggle an
+        invalid intent past inspection by padding the list ahead of it. A refusal is returned
+        rather than dropped: what the model tried is exactly what a purple-team run wants to see.
         """
         try:
             payload = json.loads(text)
         except ValueError:
-            return text[:4000], ()
+            return text[:4000], (), ("<unparseable>",)
         if not isinstance(payload, dict):
-            return text[:4000], ()
+            return text[:4000], (), ("<unparseable>",)
         message = str(payload.get("message", ""))[:4000]
         intents: list[AgentToolIntent] = []
+        rejected: list[str] = []
         raw = payload.get("tool_intents")
         if isinstance(raw, list):
-            for item in raw[:limit]:
+            for item in raw[:scanned]:
                 try:
                     intents.append(AgentToolIntent.model_validate(item))
                 except ValueError:
-                    continue
-        return message, tuple(intents)
+                    named = item.get("operation") if isinstance(item, dict) else None
+                    rejected.append(str(named)[:64] if named else "<malformed>")
+        # The cap is a signed authority limit, so anything beyond it is refused, not ignored.
+        rejected.extend(f"{intent.operation} (over per-turn cap)" for intent in intents[limit:])
+        return message, tuple(intents[:limit]), tuple(rejected)
 
     async def execute(
         self, action: ActionRequest, *, credential: str | None, authorize_target: Authorize
@@ -189,7 +196,7 @@ class AgentAdapter:
                 prompt=prompt,
                 authorize_target=authorize_target,
             )
-        message, intents = self.parse_intents(completion.text, self.max_intents)
+        message, intents, rejected = self.parse_intents(completion.text, self.max_intents)
         self.turns += 1
         record = completion.record
         result = AgentResult(
@@ -198,6 +205,7 @@ class AgentAdapter:
             retrieved=chunks,
             untrusted_chunks=sum(chunk.trust_level == "untrusted" for chunk in chunks),
             quarantined=quarantine,
+            rejected_intents=rejected,
             model_pin_id=record.pin_id,
             input_tokens=record.input_tokens,
             output_tokens=record.output_tokens,

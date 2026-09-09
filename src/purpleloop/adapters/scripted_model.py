@@ -33,7 +33,9 @@ from purpleloop.schemas.phase3 import ModelPin, ProviderProfile
 UNTRUSTED_BLOCK = re.compile(r"<untrusted[^>]*>.*?</untrusted>", re.DOTALL)
 TRACER_PATTERN = re.compile(r"reconciliation key (\S+?)\.")
 NOTES_PATTERN = re.compile(r"Operating notes: (.+)")
-BASE64_PATTERN = re.compile(r"\b([A-Za-z0-9+/]{24,}={0,2})\b")
+# No trailing word boundary: "=" is not a word character, so requiring one would drop base64
+# padding and make every padded blob fail strict decoding.
+BASE64_PATTERN = re.compile(r"\b([A-Za-z0-9+/]{24,}={0,2})")
 
 
 def visible_directives(prompt: str) -> str:

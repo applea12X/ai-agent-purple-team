@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, JsonValue
+from pydantic import Field, JsonValue, ValidationError, model_validator
 
 from purpleloop.control.phase2_tools import (
     ACTORS,
@@ -22,7 +22,9 @@ from purpleloop.control.phase2_tools import (
     CONTROL_DEFINITIONS,
     CROSS_TENANT_OPERATIONS,
     DEFENSES,
+    ExportArgs,
     OperationResult,
+    RefundArgs,
     definition,
 )
 from purpleloop.control.tools import ToolRegistry
@@ -85,11 +87,41 @@ INTENT_OPERATIONS: frozenset[str] = frozenset(
 
 
 class AgentToolIntent(StrictModel):
-    """One tool the assistant asked for. Arguments are typed before anything is compiled."""
+    """One tool the assistant asked for.
+
+    The operation vocabulary is closed and the arguments are validated against the operation's
+    own typed model here, before anything is compiled. An intent cannot name an adapter, a
+    target, a credential, or a budget: those come from the trusted registry and the signed
+    manifest, and there is no field on this model that could carry them.
+    """
 
     operation: IntentOperation
     resource_id: str | None = Field(default=None, max_length=128)
     arguments: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_typed_arguments(self) -> AgentToolIntent:
+        model = INTENT_ARGUMENT_MODELS[self.operation]
+        try:
+            model.model_validate(self.arguments)
+        except ValidationError as exc:
+            raise ValueError(f"intent arguments do not match {self.operation}") from exc
+        if self.operation in RESOURCE_INTENTS and self.resource_id is None:
+            raise ValueError(f"{self.operation} addresses a resource")
+        if self.operation not in RESOURCE_INTENTS and self.resource_id is not None:
+            raise ValueError(f"{self.operation} does not address a resource")
+        return self
+
+
+#: The typed argument model for each intent operation, and which ones address a resource.
+INTENT_ARGUMENT_MODELS: dict[str, type[StrictModel]] = {
+    "email.send": EmailArgs,
+    "crm.update": CrmArgs,
+    "memory.write": MemoryWriteArgs,
+    "refund.create": RefundArgs,
+    "export.create": ExportArgs,
+}
+RESOURCE_INTENTS: frozenset[str] = frozenset({"crm.update", "refund.create"})
 
 
 class RetrievedChunk(StrictModel):
@@ -110,6 +142,9 @@ class AgentResult(StrictModel):
     retrieved: tuple[RetrievedChunk, ...] = ()
     untrusted_chunks: int = Field(default=0, ge=0)
     quarantined: bool = False
+    #: Intents the assistant asked for that failed typed validation. Recorded, never dropped:
+    #: a refusal is evidence about what the model tried, which is exactly what we want to see.
+    rejected_intents: tuple[str, ...] = ()
     model_pin_id: str
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
@@ -172,7 +207,6 @@ AGENT_DEFENSES: dict[str, tuple[frozenset[str], dict[str, bool]]] = {
                 "agent-multilingual-injection",
                 "agent-multiturn-injection",
                 "agent-goal-hijack",
-                "agent-cascading-failure",
             }
         ),
         {"retrieval_provenance": True},
@@ -193,14 +227,7 @@ AGENT_DEFENSES: dict[str, tuple[frozenset[str], dict[str, bool]]] = {
         {"output_sanitization": True},
     ),
     "capability-scoping": (
-        frozenset(
-            {
-                "agent-excessive-agency",
-                "agent-confused-deputy",
-                "agent-tool-misuse",
-                "agent-code-execution",
-            }
-        ),
+        frozenset({"agent-excessive-agency", "agent-tool-misuse", "agent-confused-deputy"}),
         {"capability_scoping": True},
     ),
     "prompt-isolation": (
@@ -208,7 +235,7 @@ AGENT_DEFENSES: dict[str, tuple[frozenset[str], dict[str, bool]]] = {
         {"prompt_isolation": True},
     ),
     "schema-validation": (
-        frozenset({"agent-schema-injection", "agent-argument-injection"}),
+        frozenset({"agent-schema-injection"}),
         {"schema_validation": True},
     ),
     "workflow-approval": (
@@ -238,6 +265,7 @@ __all__ = [
     "CONFIGURATION_KEYS",
     "DATA_OPERATIONS",
     "INTENT_ADAPTERS",
+    "INTENT_ARGUMENT_MODELS",
     "INTENT_OPERATIONS",
     "LANE",
     "SUPPORTLAB_AGENT_TOOLS",

@@ -165,9 +165,8 @@ def register_agent_routes(data: FastAPI, db: Database, helpers: Helpers) -> None
         org = str(user["org_id"])
         destination = args.destination
         injected = None
-        if any(ord(char) < 32 for char in args.subject):
-            if flag("schema_validation"):
-                raise HTTPException(422, "subject may not contain control characters")
+        malformed = any(ord(char) < 32 for char in args.subject)
+        if malformed and not flag("schema_validation"):
             # Header injection: a lax parser treats the tail of the subject as extra headers.
             for line in args.subject.splitlines()[1:]:
                 name, separator, value = line.partition(":")
@@ -177,8 +176,10 @@ def register_agent_routes(data: FastAPI, db: Database, helpers: Helpers) -> None
         tracer = tracer_for(org)
         exposed = tracer in args.body
         external = destination in EXTERNAL_DESTINATIONS
-        denied = scoped("email.send") or (
-            flag("output_sanitization") and (external or exposed or injected is not None)
+        denied = (
+            scoped("email.send")
+            or (malformed and flag("schema_validation"))
+            or (flag("output_sanitization") and (external or exposed or injected is not None))
         )
         tick = db.next_tick()
         if not denied:

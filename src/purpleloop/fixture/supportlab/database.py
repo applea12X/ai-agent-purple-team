@@ -69,13 +69,21 @@ TELEMETRY_QUERY = (
     "FROM audit ORDER BY tick"
 )
 BOOLEAN_COLUMNS = frozenset(
-    {"is_approved", "canary_exposed", "is_unauthorized", "is_write", "is_blocked"}
+    {
+        "is_approved",
+        "canary_exposed",
+        "is_unauthorized",
+        "is_write",
+        "is_blocked",
+        "is_external",
+    }
 )
 BOOLEAN_ALIASES = {
     "is_approved": "approved",
     "is_unauthorized": "unauthorized",
     "is_write": "write",
     "is_blocked": "blocked",
+    "is_external": "external",
 }
 
 Row = dict[str, Any]

@@ -152,6 +152,13 @@ class PurpleTeamRunner:
                     )
                 )
                 if action.adapter == "agent":
+                    for refused in response.get("rejected_intents", []):
+                        # A refused proposal is evidence, not a harness error.
+                        self.record(
+                            EventKind.LIFECYCLE,
+                            "TOOL_INTENT_REJECTED",
+                            {"operation": str(refused)[:64]},
+                        )
                     self.record(
                         EventKind.MODEL,
                         "MODEL_CALLED",
