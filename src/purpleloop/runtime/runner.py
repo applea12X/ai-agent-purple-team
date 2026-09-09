@@ -23,13 +23,15 @@ from purpleloop.schemas.phase1 import (
     ExecutionPlan,
     Finding,
     LegResult,
+    OracleResult,
     Phase1Scenario,
     RunSummary,
     Stage,
     Step,
 )
 from purpleloop.schemas.phase2 import BrowserArtifact, ResourceUsage
-from purpleloop.schemas.phase3 import ProposalRecord, require_binding
+from purpleloop.schemas.phase3 import JudgeResult, ProposalRecord, require_binding
+from purpleloop.scoring.judge import EvidenceItem, HybridJudge, should_judge
 from purpleloop.scoring.phase1 import detect, evaluate
 from purpleloop.scoring.phase2 import estimate_resources, evidence_completeness, resource_report
 
@@ -57,6 +59,7 @@ class PurpleTeamRunner:
         lane: LaneContract = PHASE1_LANE,
         browser: BrowserProbe | None = None,
         attacker: BoundedAttacker | None = None,
+        judge: HybridJudge | None = None,
     ) -> None:
         self.runtime = runtime
         self.close = close
@@ -64,6 +67,7 @@ class PurpleTeamRunner:
         self.lane = lane
         self.browser = browser
         self.attacker = attacker
+        self.judge = judge
         self.proposals: list[ProposalRecord] = []
         self.started = time.monotonic()
         self.snapshots: dict[str, dict[str, Any]] = {}
@@ -218,6 +222,46 @@ class PurpleTeamRunner:
                     responses.append(tool_response)
                     evidence.extend(tool_ids)
         return responses, tuple(evidence), susceptible
+
+    def run_judge(
+        self,
+        leg: str,
+        security: OracleResult,
+        responses: list[dict[str, Any]],
+        telemetry: list[dict[str, Any]],
+        evidence_ids: tuple[str, ...],
+    ) -> JudgeResult | None:
+        """Consult the judge only where the deterministic oracle left the question open.
+
+        The result is advisory and is recorded as such. It never reaches the run status, the
+        finding set, or a corpus metric -- ``require_binding`` refuses it at each of those gates.
+        """
+        if self.judge is None or not should_judge(security):
+            return None
+        rubric_id = self.scenario.judge_rubric_id or "exfiltration-v1"
+        items = tuple(
+            EvidenceItem(
+                evidence_id=evidence_ids[index]
+                if index < len(evidence_ids)
+                else f"response-{index}",
+                kind="tool-response",
+                trust="trusted",
+                body=str(response)[:1200],
+            )
+            for index, response in enumerate(responses)
+        ) + tuple(
+            EvidenceItem(
+                evidence_id=f"telemetry-{event['tick']}",
+                kind="telemetry",
+                trust="trusted",
+                body=str(event)[:1200],
+            )
+            for event in telemetry
+        )
+        judgement = self.judge.judge(rubric_id=rubric_id, items=items, oracle=security)
+        if judgement is not None:
+            self.record(EventKind.JUDGE, f"{leg.upper()}_JUDGED", judgement.model_dump(mode="json"))
+        return judgement
 
     async def run_proposals(
         self, start_budget: BudgetRequest
@@ -382,6 +426,7 @@ class PurpleTeamRunner:
                 "security": security.model_dump(mode="json"),
             },
         )
+        judgement = self.run_judge(name, security, responses, events, action_ids)
         await self.stage(Stage.DETECT)
         detectors = detect(
             events, self.scenario.expected_telemetry, telemetry_id, first_attack_tick
@@ -398,6 +443,9 @@ class PurpleTeamRunner:
             susceptible=susceptible or security.verdict == "true",
             unauthorized_side_effects=sum(bool(e["unauthorized"] and e["write"]) for e in events),
             detectors=detectors,
+            judge=judgement,
+            model_calls=sum(1 for response in responses if "model_call" in response),
+            cost_microusd=sum(int(response.get("cost_microusd", 0)) for response in responses),
         )
 
     async def run(

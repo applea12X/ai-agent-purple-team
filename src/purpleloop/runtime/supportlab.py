@@ -53,12 +53,14 @@ from purpleloop.schemas.authorization import (
 )
 from purpleloop.schemas.phase2 import OwnershipScope, Phase2Grants
 from purpleloop.schemas.phase3 import DecodingParameters, ModelPin, Phase3Grants
+from purpleloop.scoring.judge import HybridJudge, ScriptedJudge
 
 MODEL_FIXTURE = ROOT / "scenarios" / "supportlab" / "model-responses.json"
 KEY_ID = "supportlab-demo-key"
 DEFENSE_PROFILES = frozenset(phase2_tools.DEFENSES)
 AGENT_DEFENSE_PROFILES = frozenset(phase3_tools.COMBINED_DEFENSES)
 OFFLINE_PIN = "offline-scripted"
+JUDGE_PIN = "offline-judge"
 ALL_CANARIES = (*CANARIES, INTERNAL_METADATA_CANARY)
 
 
@@ -138,6 +140,7 @@ def supportlab_agent_manifest(
     now: datetime | None = None,
     model_endpoint: str | None = None,
     model_pin: ModelPin | None = None,
+    judge: bool = False,
 ) -> AuthorizationManifest:
     """Manifest 1.3 for the agent lane.
 
@@ -155,6 +158,15 @@ def supportlab_agent_manifest(
         decoding=DecodingParameters(seed=seed),
         system_prompt_hash=SYSTEM_PROMPT_HASH,
     )
+    judge_pin = ModelPin(
+        pin_id=JUDGE_PIN,
+        provider="offline",
+        model_id="supportlab-scripted-judge",
+        model_version="scripted-v1",
+        decoding=DecodingParameters(seed=seed),
+        system_prompt_hash=SYSTEM_PROMPT_HASH,
+    )
+    pins = (pin, judge_pin) if judge else (pin,)
     operations = phase3_tools.DATA_OPERATIONS | phase2_tools.CONTROL_OPERATIONS
     manifest = base.model_copy(
         update={
@@ -164,11 +176,13 @@ def supportlab_agent_manifest(
             "phase3": Phase3Grants(
                 model_assets=frozenset({model_endpoint} if model_endpoint else ()),
                 model_credential_handle="supportlab-model",
-                model_pins=(pin,),
+                model_pins=pins,
                 token_budget=200_000,
                 cost_microusd_budget=1_000_000,
                 max_agent_steps=8,
                 max_tool_intents_per_turn=4,
+                judge_enabled=judge,
+                judge_model_pin=JUDGE_PIN if judge else None,
             ),
             "allowed_adapters": frozenset({"http", "tool", "chat", "browser", "control", "agent"}),
             "allowed_operations": operations,
@@ -367,7 +381,15 @@ def build_agent_runner(
     verifier: ManifestVerifier,
     **kwargs: Any,
 ) -> PurpleTeamRunner:
-    """The agent lane: the supportlab runner bound to AGENT_LANE and a model client."""
+    """The agent lane: the supportlab runner bound to AGENT_LANE and a model client.
+
+    The judge is attached only when the signed manifest enables it, and it is consulted only
+    where a deterministic oracle left the question open.
+    """
+    if manifest.phase3 is not None and manifest.phase3.judge_enabled and "judge" not in kwargs:
+        kwargs["judge"] = HybridJudge(
+            ScriptedJudge(pin_id=manifest.phase3.judge_model_pin or "scripted-judge")
+        )
     return build_supportlab_runner(output_dir, manifest, verifier, lane=AGENT_LANE, **kwargs)
 
 
