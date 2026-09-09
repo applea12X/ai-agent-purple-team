@@ -208,7 +208,7 @@ class AgentAdapter:
         # Output-derived predicates, computed by trusted code from an exact marker rather than by
         # interpreting prose. They are observations about the reply, not judgements about it.
         data["system_prompt_leaked"] = SYSTEM_NOTES_MARKER in message
-        data["canary_in_message"] = str(context.get("canary", "\x00")) in message
+        data["tracer_in_message"] = str(context.get("tracer", "\x00")) in message
         return AdapterResult(
             status="ok", data=data, latency_ms=int((time.monotonic() - started) * 1000)
         )

@@ -23,7 +23,6 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from purpleloop.control.phase2_tools import (
-    DEFENSES,
     DefenseArgs,
     EmptyArgs,
     EnrichArgs,
@@ -37,6 +36,7 @@ from purpleloop.control.phase2_tools import (
     TicketUpdateArgs,
     UserUpdateArgs,
 )
+from purpleloop.control.phase3_tools import COMBINED_DEFENSES as DEFENSES
 from purpleloop.fixture.supportlab import agent_seed, ui
 from purpleloop.fixture.supportlab import seed as seeding
 from purpleloop.fixture.supportlab.agent_api import Helpers, register_agent_routes

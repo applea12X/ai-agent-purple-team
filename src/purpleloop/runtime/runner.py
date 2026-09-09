@@ -148,7 +148,7 @@ class PurpleTeamRunner:
                     or bool(intents)
                     or any(
                         bool(response.get(name))
-                        for name in ("system_prompt_leaked", "canary_in_message")
+                        for name in ("system_prompt_leaked", "tracer_in_message")
                     )
                 )
                 if action.adapter == "agent":

@@ -20,15 +20,18 @@ import httpx
 import uvicorn
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from purpleloop.adapters.agent import SYSTEM_PROMPT_HASH, AgentAdapter
 from purpleloop.adapters.base import Adapter
 from purpleloop.adapters.browser import BrowserAdapter, BrowserDriver, HtmlFormDriver
+from purpleloop.adapters.model_provider import ModelClient, Provider
 from purpleloop.adapters.offline_model import OfflineModelStore
 from purpleloop.adapters.phase1 import AdapterRegistry, ChatAdapter, HttpAdapter, ToolAdapter
-from purpleloop.control import phase2_tools
+from purpleloop.adapters.scripted_model import ScriptedAgentModel
+from purpleloop.control import phase2_tools, phase3_tools
 from purpleloop.control.budgets import BudgetLedger
 from purpleloop.control.credentials import InMemoryCredentialBroker
 from purpleloop.control.kill_switch import KillSwitch
-from purpleloop.control.lanes import SUPPORTLAB_LANE
+from purpleloop.control.lanes import AGENT_LANE, SUPPORTLAB_LANE, LaneContract
 from purpleloop.control.manifest import ManifestVerifier, sign_manifest
 from purpleloop.control.policy import DefaultDenyPolicy
 from purpleloop.control.redaction import Redactor
@@ -49,10 +52,13 @@ from purpleloop.schemas.authorization import (
     Phase1Grants,
 )
 from purpleloop.schemas.phase2 import OwnershipScope, Phase2Grants
+from purpleloop.schemas.phase3 import DecodingParameters, ModelPin, Phase3Grants
 
 MODEL_FIXTURE = ROOT / "scenarios" / "supportlab" / "model-responses.json"
 KEY_ID = "supportlab-demo-key"
 DEFENSE_PROFILES = frozenset(phase2_tools.DEFENSES)
+AGENT_DEFENSE_PROFILES = frozenset(phase3_tools.COMBINED_DEFENSES)
+OFFLINE_PIN = "offline-scripted"
 ALL_CANARIES = (*CANARIES, INTERNAL_METADATA_CANARY)
 
 
@@ -121,6 +127,64 @@ def supportlab_manifest(
             wall_time_seconds=120,
         ),
         signature="",
+    )
+    return sign_manifest(manifest, key)
+
+
+def supportlab_agent_manifest(
+    key: Ed25519PrivateKey,
+    *,
+    seed: int = 42,
+    now: datetime | None = None,
+    model_endpoint: str | None = None,
+    model_pin: ModelPin | None = None,
+) -> AuthorizationManifest:
+    """Manifest 1.3 for the agent lane.
+
+    Offline by default and therefore authorizing **no** model endpoint at all: the absence of the
+    grant is the control, and the scripted provider has nowhere to go. Passing ``model_endpoint``
+    and a networked ``model_pin`` opens the model plane for the stochastic lane; the target assets
+    stay loopback either way, which the schema enforces (ADR 0008).
+    """
+    base = supportlab_manifest(key, seed=seed, now=now)
+    pin = model_pin or ModelPin(
+        pin_id=OFFLINE_PIN,
+        provider="offline",
+        model_id="supportlab-scripted",
+        model_version="scripted-v1",
+        decoding=DecodingParameters(seed=seed),
+        system_prompt_hash=SYSTEM_PROMPT_HASH,
+    )
+    operations = phase3_tools.DATA_OPERATIONS | phase2_tools.CONTROL_OPERATIONS
+    manifest = base.model_copy(
+        update={
+            "schema_version": "1.3.0",
+            "signature": "",
+            "phase1": Phase1Grants(defense_profiles=AGENT_DEFENSE_PROFILES),
+            "phase3": Phase3Grants(
+                model_assets=frozenset({model_endpoint} if model_endpoint else ()),
+                model_credential_handle="supportlab-model",
+                model_pins=(pin,),
+                token_budget=200_000,
+                cost_microusd_budget=1_000_000,
+                max_agent_steps=8,
+                max_tool_intents_per_turn=4,
+            ),
+            "allowed_adapters": frozenset({"http", "tool", "chat", "browser", "control", "agent"}),
+            "allowed_operations": operations,
+            "credential_scopes": {
+                **{handle: phase3_tools.DATA_OPERATIONS for handle in phase2_tools.ATTACK_HANDLES},
+                phase2_tools.CONTROL_HANDLE: phase2_tools.CONTROL_OPERATIONS,
+            },
+            "budgets": base.budgets.model_copy(
+                update={
+                    "requests": 600,
+                    "records": 600,
+                    "tokens": 200_000,
+                    "cost_microusd": 1_000_000,
+                }
+            ),
+        }
     )
     return sign_manifest(manifest, key)
 
@@ -211,11 +275,14 @@ def build_supportlab_runner(
     control: str,
     fixture: InProcessSupportlab | ServedSupportlab | ComposeSupportlab,
     browser_driver: BrowserDriver | None = None,
+    lane: LaneContract = SUPPORTLAB_LANE,
+    model_provider: Provider | None = None,
+    model_pin_id: str = OFFLINE_PIN,
     **runner_options: Any,
 ) -> PurpleTeamRunner:
     transports = fixture.transports
-    http = HttpAdapter(transports=transports, tools=SUPPORTLAB_LANE.tools)
-    tool = ToolAdapter(transports=transports, tools=SUPPORTLAB_LANE.tools)
+    http = HttpAdapter(transports=transports, tools=lane.tools)
+    tool = ToolAdapter(transports=transports, tools=lane.tools)
     chat = ChatAdapter(OfflineModelStore(MODEL_FIXTURE))
     if browser_driver is not None:
         driver: BrowserDriver = browser_driver
@@ -229,7 +296,7 @@ def build_supportlab_runner(
     browser = BrowserAdapter(
         driver,
         artifact_root=output_dir / "browser",
-        tools=SUPPORTLAB_LANE.tools,
+        tools=lane.tools,
         secrets=(control, *actor_tokens.values(), *ALL_CANARIES),
     )
     adapters: dict[str, Adapter] = {
@@ -239,16 +306,36 @@ def build_supportlab_runner(
         "chat": chat,
         "browser": browser,
     }
+    definitions = [
+        *phase2_tools.API_DEFINITIONS,
+        *phase2_tools.BROWSER_DEFINITIONS,
+        *phase2_tools.CONTROL_DEFINITIONS,
+    ]
+    budgets = BudgetLedger(manifest.budgets)
+    if lane.requires_phase3:
+        assert manifest.phase3 is not None
+        model = ModelClient(
+            pins=manifest.phase3.model_pins,
+            providers={
+                (model_provider or ScriptedAgentModel()).profile: model_provider
+                or ScriptedAgentModel()
+            },
+            budgets=budgets,
+        )
+        adapters["agent"] = AgentAdapter(
+            model,
+            pin_id=model_pin_id,
+            tools=lane.tools,
+            transports=transports,
+            max_intents=manifest.phase3.max_tool_intents_per_turn,
+        )
+        definitions.extend(phase3_tools.AGENT_DEFINITIONS)
     registry = AdapterRegistry(
         tuple(
             (definition.adapter, definition.operation, adapters[definition.adapter])
-            for definition in (
-                *phase2_tools.API_DEFINITIONS,
-                *phase2_tools.BROWSER_DEFINITIONS,
-                *phase2_tools.CONTROL_DEFINITIONS,
-            )
+            for definition in definitions
         ),
-        tools=SUPPORTLAB_LANE.tools,
+        tools=lane.tools,
     )
     broker = InMemoryCredentialBroker(
         {
@@ -259,8 +346,8 @@ def build_supportlab_runner(
     )
     runtime = SafetyRuntime(
         verifier=verifier,
-        policy=DefaultDenyPolicy(SUPPORTLAB_LANE.tools),
-        budgets=BudgetLedger(manifest.budgets),
+        policy=DefaultDenyPolicy(lane.tools),
+        budgets=budgets,
         kill_switch=KillSwitch(),
         credential_broker=broker,
         redactor=Redactor(
@@ -270,8 +357,18 @@ def build_supportlab_runner(
         ledger=EvidenceLedger(output_dir / "evidence.jsonl"),
     )
     return PurpleTeamRunner(
-        runtime, close=fixture.close, lane=SUPPORTLAB_LANE, browser=browser, **runner_options
+        runtime, close=fixture.close, lane=lane, browser=browser, **runner_options
     )
+
+
+def build_agent_runner(
+    output_dir: Path,
+    manifest: AuthorizationManifest,
+    verifier: ManifestVerifier,
+    **kwargs: Any,
+) -> PurpleTeamRunner:
+    """The agent lane: the supportlab runner bound to AGENT_LANE and a model client."""
+    return build_supportlab_runner(output_dir, manifest, verifier, lane=AGENT_LANE, **kwargs)
 
 
 class ComposeSupportlab:  # pragma: no cover - container lane
