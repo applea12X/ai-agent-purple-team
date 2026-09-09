@@ -27,6 +27,7 @@ from purpleloop.schemas.phase1 import (
     Step,
 )
 from purpleloop.schemas.phase2 import BrowserArtifact, ResourceUsage
+from purpleloop.schemas.phase3 import require_binding
 from purpleloop.scoring.phase1 import detect, evaluate
 from purpleloop.scoring.phase2 import estimate_resources, evidence_completeness, resource_report
 
@@ -319,6 +320,10 @@ class PurpleTeamRunner:
             if reset["state_hash"] != seeded["state_hash"] or reset["configuration"] != config:
                 raise ValueError("reset state or defense drift")
             replay = await self.leg("replay", seeded["state_hash"])
+            # Release gate. Status, findings, and mitigation credit read binding verdicts only;
+            # an advisory judgement attached to either leg is refused here rather than averaged
+            # in. This is the enforcement point behind the Phase 3 contract change.
+            require_binding(baseline.security, baseline.utility, replay.security, replay.utility)
             effective = baseline.security.verdict == "true" and replay.security.verdict == "false"
             regression = baseline.utility.verdict == "true" and replay.utility.verdict != "true"
             findings: tuple[Finding, ...] = ()
