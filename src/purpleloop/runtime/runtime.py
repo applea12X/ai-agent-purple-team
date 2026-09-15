@@ -196,10 +196,70 @@ class SafetyRuntime:
             except (ManifestError, TargetError, BudgetError) as exc:
                 raise BoundaryDenied(exc.reason_code) from exc
 
+        async def authorize_model(observation: TargetObservation) -> None:
+            """Authorize a model-plane call before any connection is made.
+
+            The model plane is separate from the target plane (ADR 0008): a model endpoint is
+            never a signed target asset, so this never consults ``manifest.assets`` for permission.
+            It authorizes an exact signed origin from ``phase3.model_assets``, refuses a
+            resolution that lands on a signed target endpoint -- which is how a rebind would try
+            to aim a model call at the fixture -- and charges the request either way, so a denied
+            call is recorded and paid for rather than silently dropped.
+            """
+            try:
+                self.verifier.verify(manifest, now=self.clock())
+                grants = manifest.phase3
+                canonical = canonicalize_url(observation.url)
+                origin = f"{canonical.scheme}://{canonical.host}:{canonical.port}"
+                signed = grants.model_assets if grants is not None else frozenset()
+                target_endpoints = {
+                    (address, asset.port)
+                    for asset in manifest.assets
+                    for address in asset.allowed_resolved_addresses
+                }
+                rebound = any(
+                    (address, canonical.port) in target_endpoints
+                    for address in observation.resolved_addresses
+                )
+                permitted = origin in signed and not rebound
+                reason = "MODEL_ENDPOINT_PERMITTED"
+                if origin not in signed:
+                    reason = "MODEL_ENDPOINT_NOT_SIGNED"
+                elif rebound:
+                    reason = "MODEL_ENDPOINT_RESOLVES_TO_TARGET"
+                await self.budgets.charge(BudgetRequest(requests=1, records=0))
+                event = self._record(
+                    run_id,
+                    trace_id,
+                    EventKind.POLICY,
+                    manifest_digest,
+                    decision.policy_digest,
+                    action_digest,
+                    "permit" if permitted else "deny",
+                    reason,
+                    {
+                        "url": observation.url,
+                        "origin": origin,
+                        "kind": "model",
+                        "resolved_addresses": [
+                            str(address) for address in observation.resolved_addresses
+                        ],
+                    },
+                    redactor=effective_redactor,
+                )
+                event_hashes.append(event.event_hash or "")
+                if not permitted:
+                    raise BoundaryDenied(reason)
+            except (ManifestError, TargetError, BudgetError) as exc:
+                raise BoundaryDenied(exc.reason_code) from exc
+
         async def authorize_target(observation: TargetObservation) -> None:
             nonlocal next_hop
             if observation.kind == "subresource":
                 await authorize_subresource(observation)
+                return
+            if observation.kind == "model":
+                await authorize_model(observation)
                 return
             try:
                 if observation.hop_index != next_hop:

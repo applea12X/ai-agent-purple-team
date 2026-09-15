@@ -44,13 +44,18 @@ class TargetObservation(StrictModel):
 
     ``kind`` distinguishes a top-level navigation or redirect hop (``document``), which takes
     part in consecutive hop sequencing, from a browser subresource request (``subresource``),
-    which is authorized against the signed origin allowlist and charged to the run budget.
+    which is authorized against the signed origin allowlist and charged to the run budget, and
+    from a model-plane call (``model``), which is authorized against ``phase3.model_assets``.
+
+    A ``model`` observation is deliberately not reachable from a plan: model endpoints are never
+    signed target assets, so no compiled action can aim at one. Only a trusted collaborator
+    inside an adapter can raise one, and it is authorized here before any connection is made.
     """
 
     url: str
     resolved_addresses: tuple[IPv4Address | IPv6Address, ...] = Field(min_length=1)
     hop_index: int = Field(ge=0)
-    kind: Literal["document", "subresource"] = "document"
+    kind: Literal["document", "subresource", "model"] = "document"
 
     @field_validator("url")
     @classmethod

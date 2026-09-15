@@ -11,6 +11,7 @@ from purpleloop.schemas.phase1 import (
     OracleSpec,
     RunSummary,
 )
+from purpleloop.schemas.phase3 import require_binding
 
 MISSING = object()
 
@@ -124,12 +125,16 @@ def corpus_metrics(truth: GroundTruth, summaries: Sequence[RunSummary]) -> dict[
     Recall and false positives come from labelled positive and negative controls, never from
     scenario-level pass/fail. An unlabelled scenario raises rather than being skipped, and
     labelled scenarios that were never executed are reported instead of ignored.
+
+    This is a release gate, so it reads binding verdicts only: an advisory judgement or a
+    pinned-stochastic result is refused by :func:`require_binding` rather than being counted.
     """
     tp = fn = fp = tn = 0
     positive_runs = negative_runs = 0
     missing_negative_controls: list[str] = []
     for summary in summaries:
         case = truth.case(summary.scenario_id)
+        require_binding(*summary.findings)
         positive_runs += 1
         observed = len(summary.findings)
         tp += min(observed, case.expected_findings)
@@ -137,6 +142,7 @@ def corpus_metrics(truth: GroundTruth, summaries: Sequence[RunSummary]) -> dict[
         if summary.replay is None:
             missing_negative_controls.append(summary.run_id)
             continue
+        require_binding(summary.replay.security)
         negative_runs += 1
         negative_findings = int(summary.replay.security.verdict == "true")
         extra = max(negative_findings - case.expected_negative_findings, 0)

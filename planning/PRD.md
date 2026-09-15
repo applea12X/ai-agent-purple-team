@@ -463,7 +463,41 @@ threatens bit-level replay determinism.
 - Phase 0's 57 tests and Phase 1's 133 tests pass unchanged, and the 85% branch-coverage floor
   holds.
 
-### Phase 3 — LLM/RAG agent and adaptive attack lane
+### Phase 3 — LLM/RAG agent and adaptive attack lane — complete (2026-09-09)
+
+The implemented design is documented in `docs/phase3-plan.md`; the measured results are in
+`docs/phase3-acceptance.md`. Both are authoritative over the pre-implementation task list that
+this section carries below.
+
+Checkpoint — measured:
+
+- 48 labelled scenarios across three lanes (5 Phase 1, 18 supportlab, 25 agent), all with
+  versioned taxonomy mappings, complete ground-truth labels, and deterministic oracles. All nine
+  injection channels populated, checked by a test.
+- Clean utility, utility under attack, attack success, and executed unauthorized side effects
+  reported as four separate numbers over 5 repetitions per scenario, with Wilson or bootstrap
+  intervals and zero exclusions.
+- Zero out-of-scope actions with a deliberately captured model, across all 25 scenarios, with
+  every invented operation recorded as a refusal rather than raised as an error.
+- Judge agreement with adjudicated labels: Krippendorff's alpha 1.0 (n=24, CI 1.0–1.0), Cohen's
+  kappa 1.0 (n=14, abstention-excluded), order-swap consistency 1.0. Held-out evaluator-injection
+  resistance 1.0 with zero critical false passes; the negative control without delimiting falls to
+  0.583 with five critical false passes.
+- Token estimate within ±10% for 24 of 25 scenarios (range −16.04% to +6.31%); the one miss is
+  named and the calibration was not re-tuned. API cost is a measured zero because the lane is
+  offline.
+- Deterministic lanes replay exactly as before; the agent lane replayed 75/75.
+- 339 tests pass, 88.53% branch coverage; Phase 0's 133 and Phase 2's 37 pass unchanged.
+- Container lane (run after the in-process record): 9 container-gated tests pass, the 18-scenario
+  Phase 2 demo verifies on PostgreSQL and Chromium, and the agent corpus passes 25/25 against
+  PostgreSQL with oracle hashes identical to SQLite. That run found and fixed a defect that made
+  the agent surface unseedable on PostgreSQL; the in-process figures had been true only for SQLite.
+
+**Known limit carried out of this phase:** no real model was called. Every number above was
+produced with a deterministic susceptibility stand-in, and the judge figures measure the harness's
+evaluator hardening rather than a model's resistance. The stochastic lane exists and is wired into
+CI, and has not been run against a real endpoint. Phase 4's nightly lane is where that number first
+becomes real.
 
 #### Objective and contract change
 
@@ -552,6 +586,57 @@ it. No stochastic result may gate a release-blocking invariant.
   variance instead of claiming determinism.
 
 ### Phase 4 — CI quality system and portfolio release
+
+#### WP4.0 — Debt carried out of Phase 3
+
+Phase 3 left one substantial gap and several smaller ones. All of them share a cause: the
+stochastic lane was built, wired into CI, and never run against a real endpoint, so every number
+in `docs/phase3-acceptance.md` came from a deterministic stand-in. Clearing this is the whole
+reason Phase 4's nightly lane exists, and it must be done before any Phase 3 figure is repeated in
+a portfolio claim.
+
+- **Run the stochastic lane against a real model.** `make agent-stochastic`, the `stochastic` CI
+  job, `OpenAICompatibleProvider`, and the pin/decoding/seed plumbing all exist and are tested
+  against a stub transport. What does not exist is a single measured result from a real endpoint.
+  Until then the phase's model-facing claims are claims about a simulator.
+- **Report a real API cost.** Phase 3 met the token half of the ±10% checkpoint and met the cost
+  half vacuously, because the offline pin's declared price is zero. A real cost figure needs (1).
+  The per-call token expectations on the offline pin are calibrated for the *scripted* model and
+  must be re-calibrated per real pin, once, and then held fixed.
+- **Measure judge agreement against a real judge model.** Phase 3's alpha of 1.0 measures the
+  harness's evaluator hardening with a scripted stand-in; it says nothing about a real judge. The
+  frozen label set and the negative control are already in place, so this is a matter of pointing a
+  pinned judge at them. Report self-family bias explicitly by running target and judge from the
+  same family and stating the delta (open question 2 of the Phase 3 plan, still open).
+- **Measure stochastic variance and reproduction rate.** With a real provider the agent lane will
+  not replay bit-exactly. Report its own measured variance and reproduction rate separately, with
+  a stated reason for the gap, the way the browser lane reports its own replay number — never
+  folded into the deterministic lane's figure.
+- **Re-run the compromised-model property test against a real model.** The `HostileModel` result
+  is strong evidence about the kernel, because the kernel is deterministic. It is not evidence
+  that a real model produces intents the kernel has not seen. The property is the same; the input
+  distribution is not.
+
+Smaller items, each cheap and none blocking:
+
+- **Detection delay is still injected logical ticks.** Either instrument real wall-clock detection
+  latency or keep the caveat; do not let real token counts make the tick number look real by
+  proximity.
+- **`ModelClient` is not plan-reachable**, so it cannot run the shared adapter contract suite by
+  dispatch. Its deadline, cancellation, redaction, bounded-output, and no-fallback behaviour are
+  covered by dedicated tests (`tests/phase3/test_model_plane.py`). This is the deliberate cost of
+  the two-plane split (ADR 0008); revisit only if the split changes.
+- **No code-execution surface exists in `supportlab`**, so no scenario claims an
+  unexpected-code-execution finding; it is covered as a containment property instead. Adding such a
+  surface is a fixture capability change with its own containment story and belongs in Phase 5, if
+  anywhere.
+- **The agent routes have not run inside the fixture container image.** The agent corpus passed
+  against a real PostgreSQL container with the application in process, and the Phase 2 routes run in
+  the image via `supportlab-demo`, but there is no compose stack for the agent lane. Add an
+  `agent-demo --fixture compose` path so the agent surface is exercised under the same containment
+  as every other route.
+- **Retrieval is lexical, not embedding-based** (ADR 0011). If a later phase adds vector retrieval,
+  retrieval moves into the stochastic class and must then report its own replay rate separately.
 
 #### WP4.1 — Fast PR lane
 

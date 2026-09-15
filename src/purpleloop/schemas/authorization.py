@@ -10,6 +10,7 @@ from pydantic import Field, field_validator, model_validator
 from purpleloop.schemas.action import SideEffectClass
 from purpleloop.schemas.common import StrictModel, require_identifier, require_utc
 from purpleloop.schemas.phase2 import Phase2Grants
+from purpleloop.schemas.phase3 import Phase3Grants
 
 
 class AssetScope(StrictModel):
@@ -100,6 +101,13 @@ class BudgetLimits(StrictModel):
     wall_time_seconds: float = Field(default=60.0, gt=0)
 
 
+#: Manifest versions that carry Phase 1 grants and the loopback-fixture posture.
+PHASE1_PLUS: frozenset[str] = frozenset({"1.1.0", "1.2.0", "1.3.0"})
+#: Manifest versions that may carry Phase 2 grants. Phase 3 builds on the supportlab fixture, so
+#: it keeps signed ownership rather than replacing it.
+PHASE2_PLUS: frozenset[str] = frozenset({"1.2.0", "1.3.0"})
+
+
 class Phase1Grants(StrictModel):
     max_nodes: int = Field(default=64, ge=1, le=256)
     max_depth: int = Field(default=16, ge=1, le=64)
@@ -107,9 +115,10 @@ class Phase1Grants(StrictModel):
 
 
 class AuthorizationManifest(StrictModel):
-    schema_version: Literal["1.0.0", "1.1.0", "1.2.0"] = "1.0.0"
+    schema_version: Literal["1.0.0", "1.1.0", "1.2.0", "1.3.0"] = "1.0.0"
     phase1: Phase1Grants | None = None
     phase2: Phase2Grants | None = None
+    phase3: Phase3Grants | None = None
     engagement_id: str
     owner: str
     approvers: tuple[str, ...]
@@ -202,20 +211,26 @@ class AuthorizationManifest(StrictModel):
             raise ValueError("Phase 0 permits read-only effects only")
         if SideEffectClass.DESTRUCTIVE in self.allowed_side_effects:
             raise ValueError("destructive actions are forbidden")
-        if self.schema_version in {"1.1.0", "1.2.0"} and (
+        if self.schema_version in PHASE1_PLUS and (
             self.phase1 is None or self.data_classification != "synthetic"
         ):
             raise ValueError("Phase 1 requires explicit grants and synthetic data")
-        if self.schema_version in {"1.1.0", "1.2.0"} and any(
+        if self.schema_version in PHASE1_PLUS and any(
             asset.host != "127.0.0.1" or asset.scheme != "http" for asset in self.assets
         ):
+            # Target assets stay loopback in every phase. A model endpoint is not a target asset;
+            # it lives on the separate model plane in ``phase3.model_assets`` (ADR 0008).
             raise ValueError("Phase 1 assets must be exact loopback HTTP fixtures")
-        if self.schema_version in {"1.1.0", "1.2.0"} and self.synthetic_secrets:
+        if self.schema_version in PHASE1_PLUS and self.synthetic_secrets:
             raise ValueError("Phase 1 secrets belong in the broker, not the exported manifest")
-        if self.schema_version != "1.2.0" and self.phase2 is not None:
-            raise ValueError("Phase 2 grants require manifest 1.2")
-        if self.schema_version == "1.2.0":
+        if self.schema_version not in PHASE2_PLUS and self.phase2 is not None:
+            raise ValueError("Phase 2 grants require manifest 1.2 or later")
+        if self.schema_version in PHASE2_PLUS:
             self._validate_phase2()
+        if self.schema_version != "1.3.0" and self.phase3 is not None:
+            raise ValueError("Phase 3 grants require manifest 1.3")
+        if self.schema_version == "1.3.0":
+            self._validate_phase3()
         if set(self.credential_scopes) != set(self.credential_handles):
             raise ValueError("every credential handle requires one exact scope")
         if any(not operations for operations in self.credential_scopes.values()):
@@ -240,6 +255,20 @@ class AuthorizationManifest(StrictModel):
             raise ValueError("ownership scopes must name signed tenants")
         if grants.subresource_origins and not grants.browser_assets:
             raise ValueError("subresource origins require a browser asset")
+
+    def _validate_phase3(self) -> None:
+        grants = self.phase3
+        if grants is None:
+            raise ValueError("Phase 3 requires explicit phase3 grants")
+        if grants.model_credential_handle in self.credential_handles or any(
+            grants.model_credential_handle in scope for scope in self.credential_scopes.values()
+        ):
+            raise ValueError("the model credential can never be an attack credential")
+        # The two-plane split (ADR 0008): no model endpoint may name a target asset's origin, so a
+        # model call can never be aimed at the fixture and the fixture keeps its no-egress posture.
+        target_origins = {f"{a.scheme}://{a.host}:{a.port}" for a in self.assets}
+        if grants.model_assets & target_origins:
+            raise ValueError("a model endpoint can never be a target asset origin")
 
     def resource_owner(self, resource_id: str) -> str | None:
         """Resolve ownership from signed data only. Returns None when nothing is signed."""

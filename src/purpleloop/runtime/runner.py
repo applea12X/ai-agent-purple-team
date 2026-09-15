@@ -4,10 +4,12 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, cast
 
+from purpleloop.control.attacker import BoundedAttacker
 from purpleloop.control.lanes import PHASE1_LANE, LaneContract
 from purpleloop.control.phase1_tools import ChatArgs, ToolIntent
+from purpleloop.control.phase3_tools import INTENT_ADAPTERS, AgentToolIntent
 from purpleloop.control.plan_compiler import compile_plan, compile_step
 from purpleloop.runtime.fixture import FixtureController
 from purpleloop.runtime.replay import replay_fingerprint
@@ -21,14 +23,33 @@ from purpleloop.schemas.phase1 import (
     ExecutionPlan,
     Finding,
     LegResult,
+    OracleResult,
     Phase1Scenario,
     RunSummary,
     Stage,
     Step,
 )
 from purpleloop.schemas.phase2 import BrowserArtifact, ResourceUsage
+from purpleloop.schemas.phase3 import JudgeResult, ProposalRecord, require_binding
+from purpleloop.scoring.judge import EvidenceItem, HybridJudge, should_judge
 from purpleloop.scoring.phase1 import detect, evaluate
 from purpleloop.scoring.phase2 import estimate_resources, evidence_completeness, resource_report
+
+#: Fields excluded from the oracle hash because they identify *this run* rather than what the
+#: oracles decided. Every evidence id is a per-run event hash, so leaving one in would make the
+#: semantic hash differ between two identical runs -- which is exactly what it exists to detect.
+ORACLE_HASH_EXCLUDE: dict[str, Any] = {
+    "security": {"evidence_ids"},
+    "utility": {"evidence_ids"},
+    "utility_under_attack": {"evidence_ids"},
+    "detectors": {"__all__": {"evidence_ids"}},
+    "judge": {"cited_evidence_ids", "input_digest"},
+}
+
+
+def leg_semantics(leg: LegResult | None) -> dict[str, Any] | None:
+    """What a leg decided, with per-run identifiers removed."""
+    return None if leg is None else leg.model_dump(mode="json", exclude=ORACLE_HASH_EXCLUDE)
 
 
 class BrowserProbe(Protocol):
@@ -53,12 +74,17 @@ class PurpleTeamRunner:
         stage_hook: Callable[[Stage], Awaitable[None]] | None = None,
         lane: LaneContract = PHASE1_LANE,
         browser: BrowserProbe | None = None,
+        attacker: BoundedAttacker | None = None,
+        judge: HybridJudge | None = None,
     ) -> None:
         self.runtime = runtime
         self.close = close
         self.stage_hook = stage_hook
         self.lane = lane
         self.browser = browser
+        self.attacker = attacker
+        self.judge = judge
+        self.proposals: list[ProposalRecord] = []
         self.started = time.monotonic()
         self.snapshots: dict[str, dict[str, Any]] = {}
         self.plan: ExecutionPlan | None = None
@@ -110,7 +136,16 @@ class PurpleTeamRunner:
             raise RuntimeError(result.reason_code)
         return result.result.data, result.event_hashes
 
-    async def execute_steps(self, phase: str) -> tuple[list[dict[str, Any]], tuple[str, ...], bool]:
+    async def execute_steps(
+        self, phase: str, *, variant: str = ""
+    ) -> tuple[list[dict[str, Any]], tuple[str, ...], bool]:
+        """Run one leg's nodes.
+
+        ``variant`` re-runs the same nodes under distinct action and idempotency identities. It
+        exists for the utility-under-attack pass: without it the second run of a clean task would
+        collide with the first on its idempotency key and replay the cached response instead of
+        measuring anything.
+        """
         assert self.plan is not None
         responses: list[dict[str, Any]] = []
         evidence: list[str] = []
@@ -121,6 +156,13 @@ class PurpleTeamRunner:
             if node.stage != phase:
                 continue
             action = node.action
+            if variant:
+                action = action.model_copy(
+                    update={
+                        "action_id": f"{action.action_id}-{variant}",
+                        "idempotency_key": f"{action.idempotency_key}:{variant}",
+                    }
+                )
             if action.adapter == "chat":
                 args = ChatArgs.model_validate(action.arguments)
                 if args.retrieved == "$previous.body":
@@ -137,11 +179,50 @@ class PurpleTeamRunner:
             response, ids = await self.action(action)
             responses.append(response)
             evidence.extend(ids)
-            if action.adapter == "chat":
+            if action.adapter in {"chat", "agent"}:
                 intents = response.get("tool_intents", [])
-                susceptible = bool(intents)
-                for raw in intents:
-                    intent = ToolIntent.model_validate(raw)
+                # Susceptibility is what the model did, not what the kernel let through. An
+                # output-derived predicate counts even when every intent is refused.
+                susceptible = (
+                    susceptible
+                    or bool(intents)
+                    or any(
+                        bool(response.get(name))
+                        for name in ("system_prompt_leaked", "tracer_in_message")
+                    )
+                )
+                if action.adapter == "agent":
+                    for refused in response.get("rejected_intents", []):
+                        # A refused proposal is evidence, not a harness error.
+                        self.record(
+                            EventKind.LIFECYCLE,
+                            "TOOL_INTENT_REJECTED",
+                            {"operation": str(refused)[:64]},
+                        )
+                    self.record(
+                        EventKind.MODEL,
+                        "MODEL_CALLED",
+                        {
+                            "call": response.get("model_call", {}),
+                            # Provenance follows the content: a finding traces back to the
+                            # document that delivered it without leaving the ledger.
+                            "retrieved": [
+                                {
+                                    key: chunk.get(key)
+                                    for key in (
+                                        "chunk_id",
+                                        "source_kind",
+                                        "source_id",
+                                        "trust_level",
+                                    )
+                                }
+                                for chunk in response.get("retrieved", [])
+                            ],
+                            "quarantined": response.get("quarantined"),
+                            "untrusted_chunks": response.get("untrusted_chunks"),
+                        },
+                    )
+                for raw in intents[: self.max_intents_per_turn()]:
                     dynamic_count += 1
                     assert self.manifest.phase1 is not None
                     if (
@@ -149,15 +230,20 @@ class PurpleTeamRunner:
                         or self.manifest.phase1.max_depth < 2
                     ):
                         raise ValueError("dynamic tool intent exceeds graph limits")
-                    step = Step(
-                        node_id=f"{node.node_id}-intent-{dynamic_count}",
-                        adapter="tool",
-                        operation=intent.operation,
-                        asset_id=self.lane.data_asset_id,
-                        target_tenant=self.scenario.actor.tenant_id,
-                        arguments=intent.arguments.model_dump(mode="json"),
-                    )
-                    compiled = compile_step(step, self.scenario, self.manifest, lane=self.lane)
+                    step = self.intent_step(action, node.node_id, dynamic_count, raw)
+                    if step is None:
+                        continue
+                    try:
+                        compiled = compile_step(step, self.scenario, self.manifest, lane=self.lane)
+                    except ValueError as exc:
+                        # A refused intent is evidence, not a harness error. The run continues and
+                        # the refusal is what the oracle and the report see.
+                        self.record(
+                            EventKind.LIFECYCLE,
+                            "TOOL_INTENT_REFUSED",
+                            {"operation": step.operation, "reason": str(exc)[:200]},
+                        )
+                        continue
                     self.record(
                         EventKind.LIFECYCLE,
                         "TOOL_INTENT_COMPILED",
@@ -168,6 +254,170 @@ class PurpleTeamRunner:
                     responses.append(tool_response)
                     evidence.extend(tool_ids)
         return responses, tuple(evidence), susceptible
+
+    async def utility_under_attack(self, before: dict[str, Any]) -> OracleResult | None:
+        """Re-run the legitimate task after the attack, on the state the attack left behind.
+
+        This is the fourth number, and it has to be measured rather than inferred: the clean task
+        runs before the attack, so nothing in an earlier leg says whether the assistant is still
+        useful once the attack has landed. Only the agent lane runs it; the API and browser lanes
+        keep exactly their Phase 2 shape.
+        """
+        if not self.lane.requires_phase3 or self.scenario.utility_oracle is None:
+            return None
+        responses, evidence, _ = await self.execute_steps("clean", variant="under-attack")
+        state = await self.controller.call("snapshot")
+        result = evaluate(
+            self.scenario.utility_oracle,
+            before=before,
+            state=state["state"],
+            responses=responses,
+            telemetry=[],
+            evidence_ids=evidence,
+        )
+        self.record(
+            EventKind.ORACLE, "UTILITY_UNDER_ATTACK", {"utility": result.model_dump(mode="json")}
+        )
+        return result
+
+    def run_judge(
+        self,
+        leg: str,
+        security: OracleResult,
+        responses: list[dict[str, Any]],
+        telemetry: list[dict[str, Any]],
+        evidence_ids: tuple[str, ...],
+    ) -> JudgeResult | None:
+        """Consult the judge only where the deterministic oracle left the question open.
+
+        The result is advisory and is recorded as such. It never reaches the run status, the
+        finding set, or a corpus metric -- ``require_binding`` refuses it at each of those gates.
+        """
+        if self.judge is None or not should_judge(security):
+            return None
+        rubric_id = self.scenario.judge_rubric_id or "exfiltration-v1"
+        items = tuple(
+            EvidenceItem(
+                evidence_id=evidence_ids[index]
+                if index < len(evidence_ids)
+                else f"response-{index}",
+                kind="tool-response",
+                trust="trusted",
+                body=str(response)[:1200],
+            )
+            for index, response in enumerate(responses)
+        ) + tuple(
+            EvidenceItem(
+                evidence_id=f"telemetry-{event['tick']}",
+                kind="telemetry",
+                trust="trusted",
+                body=str(event)[:1200],
+            )
+            for event in telemetry
+        )
+        judgement = self.judge.judge(rubric_id=rubric_id, items=items, oracle=security)
+        if judgement is not None:
+            self.record(EventKind.JUDGE, f"{leg.upper()}_JUDGED", judgement.model_dump(mode="json"))
+        return judgement
+
+    async def run_proposals(
+        self, start_budget: BudgetRequest
+    ) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
+        """Run the bounded attacker's proposals, recording every decision.
+
+        A rejected proposal is evidence about what the attacker tried and what the kernel refused;
+        it is never a harness error, and it never stops the leg.
+        """
+        responses: list[dict[str, Any]] = []
+        evidence: list[str] = []
+        if self.attacker is None:
+            return responses, tuple(evidence)
+        for proposal in self.attacker.proposals():
+            step = Step(
+                node_id=f"proposal-{proposal.index}",
+                adapter=cast(
+                    'Literal["http", "tool", "chat", "browser", "agent"]',
+                    BoundedAttacker.adapter_for(proposal.operation),
+                ),
+                operation=proposal.operation,
+                asset_id=self.lane.data_asset_id,
+                target_tenant=proposal.target_tenant,
+                resource_id=proposal.resource_id,
+                arguments=proposal.arguments,
+            )
+            accepted, reason, compiled = True, "PROPOSAL_ACCEPTED", None
+            try:
+                compiled = compile_step(step, self.scenario, self.manifest, lane=self.lane)
+            except ValueError as exc:
+                accepted, reason = False, str(getattr(exc, "reason_code", exc))[:64]
+            record = ProposalRecord(
+                proposal_index=proposal.index,
+                depth=proposal.depth,
+                operation=proposal.operation,
+                accepted=accepted,
+                reason_code=reason,
+                node_id=step.node_id if accepted else None,
+            )
+            self.proposals.append(record)
+            self.record(EventKind.PROPOSAL, reason, record.model_dump(mode="json"))
+            if compiled is None:
+                continue
+            try:
+                self.check_leg_budget(start_budget, compiled.budget, "attack")
+            except ValueError:
+                self.record(
+                    EventKind.PROPOSAL, "PROPOSAL_BUDGET_EXHAUSTED", record.model_dump(mode="json")
+                )
+                break
+            response, ids = await self.action(compiled)
+            responses.append(response)
+            evidence.extend(ids)
+        return responses, tuple(evidence)
+
+    def max_intents_per_turn(self) -> int:
+        """The signed per-turn intent cap. A literal here would be an unreviewed authority grant."""
+        return self.manifest.phase3.max_tool_intents_per_turn if self.manifest.phase3 else 1
+
+    def intent_step(
+        self, action: ActionRequest, node_id: str, ordinal: int, raw: Any
+    ) -> Step | None:
+        """Turn one parsed intent into a typed step, or refuse it.
+
+        Model output selects from a closed operation vocabulary that lives in trusted registry
+        code. An operation the model invents fails validation here and never becomes an action.
+        """
+        node = f"{node_id}-intent-{ordinal}"
+        if action.adapter == "chat":
+            intent = ToolIntent.model_validate(raw)
+            return Step(
+                node_id=node,
+                adapter="tool",
+                operation=intent.operation,
+                asset_id=self.lane.data_asset_id,
+                target_tenant=self.scenario.actor.tenant_id,
+                arguments=intent.arguments.model_dump(mode="json"),
+            )
+        try:
+            agent_intent = AgentToolIntent.model_validate(raw)
+        except ValueError as exc:
+            self.record(
+                EventKind.LIFECYCLE,
+                "TOOL_INTENT_REJECTED",
+                {"reason": str(exc)[:200]},
+            )
+            return None
+        return Step(
+            node_id=node,
+            adapter=cast(
+                'Literal["http", "tool", "chat", "browser", "agent"]',
+                INTENT_ADAPTERS[agent_intent.operation],
+            ),
+            operation=agent_intent.operation,
+            asset_id=self.lane.data_asset_id,
+            target_tenant=self.scenario.actor.tenant_id,
+            resource_id=agent_intent.resource_id,
+            arguments=agent_intent.arguments,
+        )
 
     def check_leg_budget(
         self, start: BudgetRequest, next_action: BudgetRequest, phase: str
@@ -205,7 +455,11 @@ class PurpleTeamRunner:
         clean_telemetry = await self.controller.call("telemetry")
         first_attack_tick = len(clean_telemetry["events"]) + 1
         await self.stage(Stage.ATTACK if name == "baseline" else Stage.REPLAY)
+        attack_start = self.runtime.budgets.used
         responses, action_ids, susceptible = await self.execute_steps("attack")
+        extra, extra_ids = await self.run_proposals(attack_start)
+        responses.extend(extra)
+        action_ids = (*action_ids, *extra_ids)
         after = await self.controller.call("snapshot")
         snapshot_ids = self.controller.last_evidence_ids
         self.snapshots[f"{name}-after"] = after
@@ -229,6 +483,8 @@ class PurpleTeamRunner:
                 "security": security.model_dump(mode="json"),
             },
         )
+        under_attack = await self.utility_under_attack(clean_state["state"])
+        judgement = self.run_judge(name, security, responses, events, action_ids)
         await self.stage(Stage.DETECT)
         detectors = detect(
             events, self.scenario.expected_telemetry, telemetry_id, first_attack_tick
@@ -245,6 +501,10 @@ class PurpleTeamRunner:
             susceptible=susceptible or security.verdict == "true",
             unauthorized_side_effects=sum(bool(e["unauthorized"] and e["write"]) for e in events),
             detectors=detectors,
+            utility_under_attack=under_attack,
+            judge=judgement,
+            model_calls=sum(1 for response in responses if "model_call" in response),
+            cost_microusd=sum(int(response.get("cost_microusd", 0)) for response in responses),
         )
 
     async def run(
@@ -319,6 +579,10 @@ class PurpleTeamRunner:
             if reset["state_hash"] != seeded["state_hash"] or reset["configuration"] != config:
                 raise ValueError("reset state or defense drift")
             replay = await self.leg("replay", seeded["state_hash"])
+            # Release gate. Status, findings, and mitigation credit read binding verdicts only;
+            # an advisory judgement attached to either leg is refused here rather than averaged
+            # in. This is the enforcement point behind the Phase 3 contract change.
+            require_binding(baseline.security, baseline.utility, replay.security, replay.utility)
             effective = baseline.security.verdict == "true" and replay.security.verdict == "false"
             regression = baseline.utility.verdict == "true" and replay.utility.verdict != "true"
             findings: tuple[Finding, ...] = ()
@@ -368,6 +632,7 @@ class PurpleTeamRunner:
                     "mitigation_effective": effective,
                     "utility_regression": regression,
                     "findings": findings,
+                    "proposals": tuple(self.proposals),
                 }
             )
         except asyncio.CancelledError:
@@ -479,26 +744,8 @@ class PurpleTeamRunner:
                 "event_replay_hash": event_hash,
                 "oracle_hash": digest_data(
                     {
-                        "baseline": summary.baseline.model_dump(
-                            mode="json",
-                            exclude={
-                                "security": {"evidence_ids"},
-                                "utility": {"evidence_ids"},
-                                "detectors": {"__all__": {"evidence_ids"}},
-                            },
-                        )
-                        if summary.baseline
-                        else None,
-                        "replay": summary.replay.model_dump(
-                            mode="json",
-                            exclude={
-                                "security": {"evidence_ids"},
-                                "utility": {"evidence_ids"},
-                                "detectors": {"__all__": {"evidence_ids"}},
-                            },
-                        )
-                        if summary.replay
-                        else None,
+                        "baseline": leg_semantics(summary.baseline),
+                        "replay": leg_semantics(summary.replay),
                     }
                 ),
                 "evidence_integrity_incident": integrity,

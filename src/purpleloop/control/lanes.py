@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
-from purpleloop.control import phase2_tools
+from purpleloop.control import phase2_tools, phase3_tools
 from purpleloop.control.actors import ActorBinding
 from purpleloop.control.phase1_tools import PHASE1_TOOLS
 from purpleloop.control.tools import ToolRegistry
@@ -48,6 +48,7 @@ class LaneContract:
     resource_resolver: Callable[[int, str], str] | None = None
     flows: Mapping[str, phase2_tools.Flow] = field(default_factory=lambda: MappingProxyType({}))
     requires_phase2: bool = False
+    requires_phase3: bool = False
     control_calls_per_run: int = 15
 
 
@@ -61,6 +62,21 @@ def _phase1_seed_arguments(scenario: Phase1Scenario) -> dict[str, Any]:
 
 def _supportlab_seed_arguments(scenario: Phase1Scenario) -> dict[str, Any]:
     return {"seed": scenario.fixture_seed, "scenario_id": scenario.scenario_id}
+
+
+def _agent_seed_arguments(scenario: Phase1Scenario) -> dict[str, Any]:
+    """Agent-lane seed arguments.
+
+    ``surface`` is what widens the scored projection to the agent tables, and ``capabilities`` is
+    the task's declared set, which the fixture enforces only when ``capability_scoping`` is on.
+    """
+    task = scenario.agent_task
+    return {
+        "seed": scenario.fixture_seed,
+        "scenario_id": scenario.scenario_id,
+        "surface": "agent",
+        "capabilities": sorted(task.capabilities) if task is not None else [],
+    }
 
 
 def _supportlab_resource(seed: int, key: str) -> str:
@@ -117,6 +133,37 @@ SUPPORTLAB_LANE = LaneContract(
     requires_phase2=True,
 )
 
+AGENT_LANE = LaneContract(
+    name=phase3_tools.LANE,
+    tools=phase3_tools.SUPPORTLAB_AGENT_TOOLS,
+    defenses=MappingProxyType(phase3_tools.COMBINED_DEFENSES),
+    data_asset_id=phase2_tools.DATA_ASSET,
+    control_asset_id=phase2_tools.CONTROL_ASSET,
+    control_credential_handle=phase2_tools.CONTROL_HANDLE,
+    expected_assets=MappingProxyType(
+        {
+            phase2_tools.DATA_ASSET: phase2_tools.DATA_PORT,
+            phase2_tools.CONTROL_ASSET: phase2_tools.CONTROL_PORT,
+        }
+    ),
+    actors=phase3_tools.AGENT_ACTORS,
+    cross_tenant_operations=phase3_tools.AGENT_CROSS_TENANT_OPERATIONS,
+    manifest_versions=frozenset({"1.3.0"}),
+    scenario_versions=frozenset({"1.3.0"}),
+    seed_arguments=_agent_seed_arguments,
+    # A model call adds latency the API lane does not have; the constant is reported, never tuned
+    # to make an estimate fit.
+    calibration=ResourceCalibration(0.006, 0.02, 0.12),
+    resource_resolver=_supportlab_resource,
+    flows=phase2_tools.FLOWS,
+    requires_phase2=True,
+    requires_phase3=True,
+)
+
 LANES: MappingProxyType[str, LaneContract] = MappingProxyType(
-    {PHASE1_LANE.name: PHASE1_LANE, SUPPORTLAB_LANE.name: SUPPORTLAB_LANE}
+    {
+        PHASE1_LANE.name: PHASE1_LANE,
+        SUPPORTLAB_LANE.name: SUPPORTLAB_LANE,
+        AGENT_LANE.name: AGENT_LANE,
+    }
 )

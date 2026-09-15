@@ -41,3 +41,19 @@ phase2-check: lint typecheck test
 
 supportlab-demo:
 	uv run purpleloop supportlab-demo
+
+.PHONY: phase3-check agent-demo judge-report agent-stochastic
+phase3-check: lint typecheck test
+
+agent-demo:
+	uv run purpleloop agent-demo
+
+judge-report:
+	uv run purpleloop judge-report
+
+# Opt-in only. Needs PURPLELOOP_MODEL_ENDPOINT and, for a hosted API, PURPLELOOP_MODEL_API_KEY.
+# A missing credential skips the lane; it never falls back to the offline provider.
+agent-stochastic:
+	uv run purpleloop agent-run scenarios/agent/agent-indirect-ticket.yaml \
+		artifacts/agent-stochastic --repetitions 5 --judge \
+		--endpoint "$$PURPLELOOP_MODEL_ENDPOINT" --profile "$${PURPLELOOP_MODEL_PROFILE:-openai-compatible}"

@@ -54,6 +54,23 @@ scenarios through Chromium, writes and verifies every report bundle, and tears t
 on failure. The deterministic lane runs the same corpus in process against SQLite with an exact
 HTML driver; the two engines produce byte-identical seed hashes.
 
+Phase 3 adds an LLM/RAG agent surface, a separate model plane, an adaptive attacker, and a
+hybrid judge — all offline by default:
+
+```console
+make phase3-check
+make agent-demo
+make judge-report
+uv run purpleloop agent-run scenarios/agent/agent-indirect-ticket.yaml out/agent \
+  --repetitions 5 --judge --attacker
+```
+
+`agent-demo` runs the twenty-five agent scenarios through the Inspect bridge, writes one verifiable
+bundle per repetition, and verifies the suite. It authorizes **no** model endpoint at all, so it
+cannot reach one. The stochastic lane is opt-in (`make agent-stochastic` with
+`PURPLELOOP_MODEL_ENDPOINT`, and `PURPLELOOP_MODEL_API_KEY` for a hosted API); a missing credential
+is a recorded skip and never a silent fall back to the offline provider.
+
 Building the fixture image pulls `python:3.12-slim` and `ghcr.io/astral-sh/uv` from public
 registries, so the first `phase1-demo` needs network access. Evaluation itself is fully offline
 and needs no cloud credentials.
@@ -73,6 +90,8 @@ uv run purpleloop validate-scenario scenarios/phase1/bola.yaml
 uv run purpleloop run-scenario scenarios/phase1/bola.yaml manifest.json public.pem out/bola \
   --key-id engagement-key
 uv run purpleloop verify-bundle artifacts/phase1-demo/<run>/bola
+uv run purpleloop agent-run scenarios/agent/agent-indirect-ticket.yaml out/agent --judge
+uv run purpleloop judge-report --output-dir artifacts/judge
 ```
 
 The CLI never turns an offline-fixture miss into a network request.
@@ -117,14 +136,40 @@ seed-derived identifiers, a banned-nondeterministic-function rule, and a snapsho
 canonical ordered read; the API lane reports bit-exact replay and the browser lane reports its own
 number separately.
 
+## Phase 3 architecture
+
+Phase 3 introduces the project's first non-deterministic components, so it introduces a contract to
+go with them: **deterministic oracles remain binding, stochastic components are advisory, and every
+verdict records which kind produced it.** That is a required `VerdictProvenance` field on every
+scored artifact and a single `require_binding()` check at all three gates — run status, mitigation
+credit, and the corpus metric — not a statement of intent. No stochastic result gates a
+release-blocking invariant.
+
+The model lives on a **separate plane** from the target. The fixture keeps its Phase 2 no-egress
+posture unchanged; a model endpoint is an exact signed origin that the schema forbids from
+coinciding with any target asset, and it is deliberately not plan-addressable, so no compiled action
+can aim at it. An offline engagement authorizes no model endpoint at all.
+
+`supportlab` gains a RAG assistant with provenance-tagged retrieval, a memory store, and narrow
+email, CRM, refund, export, and memory tools. The assistant parses intents; it never invokes a tool.
+Each intent is validated against its typed argument model, compiled, and executed one at a time
+through `SafetyRuntime`, capped by the signed per-turn limit — and every refusal is recorded as
+evidence about what the model tried. Retrieval is exact and totally ordered with no embeddings, so
+*what the assistant was shown* stays reproducible even where *what it said* would not be.
+
+The judge runs only where a deterministic oracle abstained. Its input is typed, bounded, and
+delimited; its citations are validated against what was supplied; abstention is a first-class
+outcome; and its verdict is advisory by construction.
+
 ## Documentation
 
 - [Product requirements and delivery plan](planning/PRD.md) and the
-  [Phase 2 plan](planning/phase2-plan.md)
+  [Phase 2](planning/phase2-plan.md) and [Phase 3](planning/phase3-plan.md) plans
 - [Architecture](docs/architecture.md) and [threat model](docs/threat-model.md)
 - [Rules of engagement](docs/rules-of-engagement.md)
-- [Phase 1 design](docs/phase1-plan.md) and [Phase 2 design](docs/phase2-plan.md), and the
+- Designs: [Phase 1](docs/phase1-plan.md), [Phase 2](docs/phase2-plan.md),
+  [Phase 3](docs/phase3-plan.md), and the
   [evaluation methodology](docs/evaluation-methodology.md)
 - Acceptance records: [Phase 0](docs/phase0-acceptance.md), [Phase 1](docs/phase1-acceptance.md),
-  and [Phase 2](docs/phase2-acceptance.md)
+  [Phase 2](docs/phase2-acceptance.md), and [Phase 3](docs/phase3-acceptance.md)
 - Decision records in [docs/adr](docs/adr)

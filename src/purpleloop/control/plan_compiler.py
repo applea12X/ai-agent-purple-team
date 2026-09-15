@@ -4,6 +4,7 @@ from typing import Literal
 
 from purpleloop.control.lanes import PHASE1_LANE, LaneContract
 from purpleloop.control.phase2_tools import FORBIDDEN_BROWSER_KEYS
+from purpleloop.control.phase3_tools import INTENT_OPERATIONS
 from purpleloop.control.policy import DefaultDenyPolicy
 from purpleloop.schemas.action import ActionRequest, ActionTarget, BudgetRequest, SideEffectClass
 from purpleloop.schemas.authorization import AuthorizationManifest
@@ -117,6 +118,18 @@ def compile_plan(
             raise PlanError("Phase 2 grants required")
         if scenario.fixture_seed != manifest.phase2.ownership_seed:
             raise PlanError("signed ownership is bound to a different fixture seed")
+    if lane.requires_phase3:
+        if manifest.phase3 is None:
+            raise PlanError("Phase 3 grants required")
+        task = scenario.agent_task
+        if task is not None:
+            unknown = task.capabilities - INTENT_OPERATIONS
+            if unknown:
+                raise PlanError(
+                    f"declared capability is not an intent operation: {sorted(unknown)}"
+                )
+            if task.max_steps > manifest.phase3.max_agent_steps:
+                raise PlanError("agent task exceeds the signed step limit")
     if len(manifest.assets) != len(lane.expected_assets) or any(
         lane.expected_assets.get(asset.asset_id) != asset.port for asset in manifest.assets
     ):
@@ -131,7 +144,14 @@ def compile_plan(
         ("clean", s) for s in scenario.clean_steps
     ] + [("attack", s) for s in scenario.attack_steps]
     ids = [s.node_id for _, s in tagged]
-    intent_slots = sum(s.adapter == "chat" for _, s in tagged)
+    # A chat turn can emit one intent; an agent turn can emit up to the signed per-turn cap. Both
+    # are reserved against the signed node budget before anything runs, so a compliant model
+    # cannot expand the graph past what was authorized.
+    per_agent_turn = manifest.phase3.max_tool_intents_per_turn if manifest.phase3 else 1
+    intent_slots = sum(
+        1 if s.adapter == "chat" else per_agent_turn if s.adapter == "agent" else 0
+        for _, s in tagged
+    )
     if len(set(ids)) != len(ids) or len(ids) + intent_slots > manifest.phase1.max_nodes:
         raise PlanError("duplicate nodes or graph exceeds signed limit")
     browser_nodes = sum(s.adapter == "browser" for _, s in tagged)
@@ -151,7 +171,7 @@ def compile_plan(
             if any(next(t for t, s in tagged if s.node_id == d) != stage for d in step.depends_on):
                 raise PlanError("dependencies cannot cross execution legs")
             depths[key] = 1 + max((depths[d] for d in step.depends_on), default=0)
-            if depths[key] + int(step.adapter == "chat") > manifest.phase1.max_depth:
+            if depths[key] + int(step.adapter in {"chat", "agent"}) > manifest.phase1.max_depth:
                 raise PlanError("graph exceeds signed depth")
             nodes.append(
                 PlanNode(

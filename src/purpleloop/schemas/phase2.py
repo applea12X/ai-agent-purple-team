@@ -12,7 +12,7 @@ from pydantic import Field, field_validator, model_validator
 
 from purpleloop.schemas.common import StrictModel, require_identifier
 
-Surface = Literal["api", "browser", "both"]
+Surface = Literal["api", "browser", "both", "agent"]
 
 # Typed selector vocabularies. A browser step can only name an entry from these closed sets; the
 # CSS selector each name resolves to lives in trusted registry code, never in planner output.

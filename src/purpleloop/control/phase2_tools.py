@@ -97,6 +97,12 @@ class EnrichArgs(StrictModel):
 class SeedArgs(StrictModel):
     seed: int = Field(strict=True, ge=0, le=2**32 - 1)
     scenario_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    # Phase 3 additions. Both default to the Phase 2 behaviour, so an API or browser scenario
+    # seeds exactly what it seeded before and produces the same state hash.
+    surface: Literal["api", "browser", "agent"] = "api"
+    #: The task's declared capability set. Enforced by the fixture only when ``capability_scoping``
+    #: is on; that pair is what the excessive-agency scenarios exercise.
+    capabilities: tuple[str, ...] = ()
 
 
 DefenseProfile = Literal[
@@ -107,6 +113,13 @@ DefenseProfile = Literal[
     "upstream-allowlist",
     "upstream-validation",
     "debug-endpoints-disabled",
+    # Phase 3 agent-lane profiles.
+    "retrieval-provenance-guard",
+    "memory-write-guard",
+    "output-sanitization",
+    "capability-scoping",
+    "prompt-isolation",
+    "schema-validation",
 ]
 
 

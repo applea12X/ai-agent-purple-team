@@ -18,11 +18,23 @@ from purpleloop.schemas.phase2 import (
     ResourceReport,
     Surface,
 )
+from purpleloop.schemas.phase3 import (
+    BINDING_PROVENANCE,
+    AgentTask,
+    InjectionChannel,
+    JudgeResult,
+    ProposalRecord,
+    RiskClass,
+    Scored,
+    StochasticReport,
+    TokenAccounting,
+    VerdictProvenance,
+)
 from purpleloop.schemas.scenario import Scenario
 
 
 class Versioned(StrictModel):
-    schema_version: Literal["1.1.0", "1.2.0"] = "1.1.0"
+    schema_version: Literal["1.1.0", "1.2.0", "1.3.0"] = "1.1.0"
 
 
 class Stage(StrEnum):
@@ -50,7 +62,7 @@ class Actor(Versioned):
 
 class Step(Versioned):
     node_id: str
-    adapter: Literal["http", "tool", "chat", "browser"]
+    adapter: Literal["http", "tool", "chat", "browser", "agent"]
     operation: str
     asset_id: str
     target_tenant: str
@@ -84,8 +96,8 @@ class Phase1Scenario(Versioned):
     capabilities: frozenset[str]
     clean_steps: tuple[Step, ...]
     attack_steps: tuple[Step, ...]
-    security_oracle: OracleSpec | None
-    utility_oracle: OracleSpec | None
+    security_oracle: OracleSpec | None = None
+    utility_oracle: OracleSpec | None = None
     expected_telemetry: tuple[str, ...]
     defense_profile: str
     reset: ResetSpec = ResetSpec()
@@ -98,10 +110,19 @@ class Phase1Scenario(Versioned):
     # Scenario 1.2 additions. ``None`` on a 1.1 document keeps its canonical bytes unchanged.
     surface: Surface | None = None
     shared_oracle: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    # Scenario 1.3 additions. Same rule: absent on 1.1 and 1.2 documents.
+    risk_class: RiskClass | None = None
+    injection_channel: InjectionChannel | None = None
+    agent_task: AgentTask | None = None
+    judge_rubric_id: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    repetitions: int | None = Field(default=None, ge=1, le=100)
 
     @model_validator(mode="after")
     def validate_steps(self) -> Phase1Scenario:
-        if not self.attack_steps and not self.legacy_actions:
+        if not self.attack_steps and not self.legacy_actions and not self.conversion_issues:
+            # A scenario with no attack step is allowed only when it records why it has none --
+            # that is what an imported, not-yet-authored case is. ``require_runnable`` still
+            # refuses it, and ``compile_plan`` calls that first, so nothing can execute.
             raise ValueError("an attack step is required")
         browser_steps = any(
             step.adapter == "browser" for step in (*self.clean_steps, *self.attack_steps)
@@ -112,6 +133,19 @@ class Phase1Scenario(Versioned):
             raise ValueError("browser steps require a browser surface declaration")
         if self.surface == "browser" and not browser_steps:
             raise ValueError("a browser-surface scenario needs a browser step")
+        agent_steps = any(
+            step.adapter == "agent" for step in (*self.clean_steps, *self.attack_steps)
+        )
+        if agent_steps and self.schema_version != "1.3.0":
+            raise ValueError("agent steps require scenario 1.3")
+        if agent_steps and self.surface != "agent":
+            raise ValueError("agent steps require an agent surface declaration")
+        if self.surface == "agent" and not agent_steps:
+            raise ValueError("an agent-surface scenario needs an agent step")
+        if agent_steps and self.agent_task is None:
+            raise ValueError("an agent scenario must declare its task and capability set")
+        if self.agent_task is not None and self.injection_channel is None:
+            raise ValueError("an agent scenario must name the channel its hostile content uses")
         return self
 
     @property
@@ -148,7 +182,10 @@ class ExecutionPlan(Versioned):
     nodes: tuple[PlanNode, ...]
 
 
-class OracleResult(Versioned):
+class OracleResult(Versioned, Scored):
+    """A closed-operator oracle verdict. Deterministic by construction and by default."""
+
+    provenance: VerdictProvenance = BINDING_PROVENANCE
     verdict: Literal["true", "false", "inconclusive"]
     oracle_version: str
     observed: JsonValue = None
@@ -160,7 +197,9 @@ class DetectorResult(Versioned):
     expected: bool
     observed: bool
     evidence_ids: tuple[str, ...]
-    time_to_detect: int | None
+    # Defaults to None so the field survives an ``exclude_none`` bundle round-trip. A rule that
+    # was expected and never fired has no detection time, and a bundle must still reload.
+    time_to_detect: int | None = None
 
 
 class DefenseSelection(Versioned):
@@ -171,7 +210,10 @@ class DefenseSelection(Versioned):
     verified: bool = False
 
 
-class Finding(Versioned):
+class Finding(Versioned, Scored):
+    """An accepted finding. Only a binding verdict can produce one; see ``require_binding``."""
+
+    provenance: VerdictProvenance = BINDING_PROVENANCE
     finding_id: str
     scenario_id: str
     asset_id: str
@@ -183,6 +225,9 @@ class Finding(Versioned):
     scenario_digest: str
     seed_hash: str
     reproducible: bool
+    #: Why reproducibility is or is not asserted. A single paired run cannot establish it, and
+    #: saying so is part of the finding rather than a footnote elsewhere.
+    reproducibility_basis: str = "single paired run; repetitions not executed"
     confidence: Literal["high", "low"] = "high"
     severity: Literal["high", "medium"] = "high"
     severity_rationale: str
@@ -198,6 +243,12 @@ class LegResult(Versioned):
     susceptible: bool
     unauthorized_side_effects: int
     detectors: tuple[DetectorResult, ...]
+    # Phase 3 additions. ``utility_under_attack`` re-runs the clean task after the attack on the
+    # same state, so utility during compromise is a measured number rather than an inference.
+    utility_under_attack: OracleResult | None = None
+    judge: JudgeResult | None = None
+    model_calls: int = Field(default=0, ge=0)
+    cost_microusd: int = Field(default=0, ge=0)
 
 
 class RunSummary(Versioned):
@@ -229,6 +280,14 @@ class RunSummary(Versioned):
     evidence_completeness: EvidenceCompleteness | None = None
     browser_driver: str | None = None
     browser_artifacts: tuple[str, ...] | None = None
+    # Phase 3 additions, absent from Phase 1 and Phase 2 summaries.
+    risk_class: RiskClass | None = None
+    injection_channel: InjectionChannel | None = None
+    model_pin_id: str | None = None
+    cost_microusd: int = Field(default=0, ge=0)
+    token_accounting: TokenAccounting | None = None
+    stochastic: StochasticReport | None = None
+    proposals: tuple[ProposalRecord, ...] = ()
 
 
 SHARED_ORACLES = "oracles.yaml"
