@@ -1,20 +1,20 @@
 {
   "artifacts": {
-    "authorization-public.pem": "d7fcb0945b023512f5c314005c7ddbb34618e47a6c8087f5124fb9de95b42d77",
-    "evidence.jsonl": "b8ec6fd26d73b293b609e9844c308f68e07aba62fe295bb9f1dbc3f8c4fe4227",
-    "evidence.jsonl.anchor": "b5d2a6d06033386cc0e2bdb3655ec458084ebdf2c733c5293b394a88b1779312",
-    "inspect/2026-09-15T06-50-14-00-00_purpleloop-phase1_RhHWpzyRNh7C5rLEZkWwKy.json": "c53babec48193920bf15472dc1c01954c99067c168146616456e2197525d5e62",
-    "manifest.json": "47df936eaad63943323bed233722e910eeeaa44ecbe48e29f354a81af3141d9e",
-    "plan.json": "c5e67608f4389071b694cdfed0e14157c1c939a6e81dcdb4ff1bb7b64a2c06a5",
-    "report.html": "8d9afb6349663355d675208c40610411cc39ded6a2c7197d8cfd12ee2e6f0039",
-    "report.sarif": "d6cfa0224160f8a9afe6b495d4887c30bee367653572aec8c29fdcd7050c3cbf",
+    "authorization-public.pem": "a5f4205c9a6767e31dd390f4aa7dc2fefef7c636e1522d0e78861e6f21690313",
+    "evidence.jsonl": "d5d1bf0440006630d266dfbf54b04778f379e7a90a504840be72ac4525b2436a",
+    "evidence.jsonl.anchor": "4b576f0124682cbd6e1d33ee79842e3f69572123fc87f407ad2021d56f9eda53",
+    "inspect/2026-09-15T22-35-59-00-00_purpleloop-phase1_HSYYzW3dRXEmimR3TQzLjv.json": "29c99cc12cdc41fe53e6340cf3c4666d2b8f5267c5885057f5c6c31cdd45f8c3",
+    "manifest.json": "3fb684db623ae5a78356f72be8310561e8a983c4ea520c09f4f20b6b8d556dfa",
+    "plan.json": "4c4bc281d0c5740232974224c62432bb066f8daae4242bfbb48628a694ce2aa3",
+    "report.html": "039138b910df29c523d58617458bff4c22b8e3d6c3c556b50b90b0bdf455fc00",
+    "report.sarif": "741882cab7c92aebc15f2ae0c87b2574d8ded4f2da61ef6fe73979aeabb48cd4",
     "report.xml": "d523d634a7f312ac915381acd95851a04d732f51b67c0c04261c59c795d0a1c1",
-    "scenario.json": "ccedd4865112cec8f19dddcd68cbf675f063aade168a319cddac8b64dc79fd8f",
+    "scenario.json": "5a39432428f6d018b046e91cc7ffd3dafc3f452825334da4731e21e24b929e3d",
     "snapshots/baseline-after.json": "56fec13dbdf316964196e7897d5809db7e1fde4c0eab79d012101478b073c8df",
     "snapshots/baseline-before.json": "61548242ba0c43a5c324acb4f125ff72895046c7636816bfcf1b6e3b0535eaff",
     "snapshots/replay-after.json": "f00f2361cf59dd1ee931bc9e7e2bf6266ddad083f677dbc691917b9d730ed45a",
     "snapshots/replay-before.json": "f00f2361cf59dd1ee931bc9e7e2bf6266ddad083f677dbc691917b9d730ed45a",
-    "summary.json": "7e00c086a5b46a383346857eac530bb6d8f66ab659f6e842ca9c1d7c14eb1fd1"
+    "summary.json": "8098e1740909b6ff7a24fcbb9b932aeccac08a498232e90aca2b2bcf61ce3a09"
   },
   "complete": true,
   "schema_version": "1.1.0"

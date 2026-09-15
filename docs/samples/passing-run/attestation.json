@@ -1,14 +1,14 @@
 {
-  "builder": "local",
+  "builder": "sample-regeneration-from-672bda2",
   "byproducts": {},
-  "created_at": "2026-09-15T06:50:43.776852Z",
+  "created_at": "2026-09-15T22:36:01.638910Z",
   "key_id": "ephemeral-local",
   "key_provenance": "ephemeral",
   "materials": {
-    "code_commit": "fa2b3e217892f3e3cd39d46e0e23073509871c5f",
+    "code_commit": "672bda22762880d223fa0d14b14a5d40d70ff1a5",
     "corpus_digest": "b620713e8132b4b93f3067a696ab8152932f97217234066821a6ad6c37b7a7d1",
     "lockfile_digest": "a34bfda4f7744750713d5692cb2889e8511bbe4382148322070dfa61146cf909",
-    "manifest_digest": "529535008d858ddc05b6707b7b92e2b39865e355c455cd7739c4fadd61b8dab5",
+    "manifest_digest": "6e89daf5fcf795a62135bb17e52dc6beac4b30027789b7fad287840a92bf7f33",
     "model_pin_ids": [
       "offline-judge",
       "offline-scripted"
@@ -18,7 +18,7 @@
     ]
   },
   "schema_version": "1.0.0",
-  "signature": "xiJvn2ZseAlcbeH/+K3bsFqNLxOtoBQNK6G6pI+K2JMljhcJ0QZGLSZSbG8RVHCD45CIPPWouhYQni2eiEXtBA==",
-  "subject_digest": "ff60537159e489bae3f3b7a80fb6e5fa525eec7c0e51f5b32038673e3a60a890",
+  "signature": "0tQa71/2H5m1PkowhNlkAE7zZMRUygOBLtoIK2cVXfhd9WlEGCPZ2MfjQRLkWzqjkcCcpElKYa1aPv4gR+0PCg==",
+  "subject_digest": "39aa532876895ba384b08ce07aaac9eacda85b2fe907ec4efd05b408e7faa42d",
   "subject_kind": "run-bundle"
 }

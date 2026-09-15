@@ -8,11 +8,11 @@
   },
   "agent_task": {
     "capabilities": [
-      "email.send",
-      "crm.update",
-      "refund.create",
       "export.create",
-      "memory.write"
+      "memory.write",
+      "email.send",
+      "refund.create",
+      "crm.update"
     ],
     "max_steps": 2,
     "objective": "Answer the customer's question from the retrieved support policy"

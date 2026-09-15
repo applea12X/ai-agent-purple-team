@@ -118,8 +118,8 @@
       "seeded_true_positives": 1
     }
   ],
-  "commit": "fa2b3e217892f3e3cd39d46e0e23073509871c5f",
+  "commit": "672bda22762880d223fa0d14b14a5d40d70ff1a5",
   "corpus": "scenarios/agent",
-  "recorded_at": "2026-09-15T06:17:45.602215Z",
+  "recorded_at": "2026-09-15T22:36:22.941719Z",
   "schema_version": "1.4.0"
 }

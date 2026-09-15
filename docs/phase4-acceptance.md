@@ -257,6 +257,45 @@ The Phase 2 and Phase 3 exclusions are unchanged.
 | 4.0.7 Agent routes under container containment | **Done:** 25 of 25, full agreement with in process. |
 | 4.0.8 Keep caveats standing | Detection delay is still logical ticks; retrieval is still lexical; there is still no code-execution surface. All three are unchanged and stated. |
 
+## Follow-up after the Phase 4 commit (September 15, 2026)
+
+`672bda2` was pushed and GitGuardian raised three "Generic High Entropy Secret" incidents against
+it. All three are false positives, and checking them found one real, non-secret defect.
+
+**No secret material is in the commit.** Every high-entropy value it added is public by design:
+168 SHA-256 digests, 3 Ed25519 signatures (two appearing twice because the incident sample is a
+copy of the passing run), 5 public keys, one git commit id, and one Inspect attachment key. There
+are zero token-shaped values; the 48-hex matches in a first pass were slices of longer digests.
+Every credential-bearing field in the sample bundles holds `[REDACTED]` or a broker handle. The
+signing keys were ephemeral and were never written to disk, so there is nothing to rotate.
+
+**Defect: two committed artifacts named a commit that did not produce them.**
+`docs/samples/passing-run/attestation.json` (and its copy under `docs/samples/incident/`) and
+`baselines/corpus-baseline.json` recorded `code_commit: fa2b3e2`. Both were generated from
+uncommitted Phase 4 code, so that commit could not have produced them — the same misstatement this
+record avoided for the release bundle, made on the committed samples. Fixed by regenerating both
+from a clean tree at `672bda2`:
+
+- The passing-run sample was re-run, verified (102 events), and re-attested with
+  `code_commit: 672bda2…`; the incident sample was rebuilt from it and still fails verification
+  with `LEDGER_INVALID` and an inventory mismatch, as `docs/reviewer-walkthrough.md` describes.
+- `baselines/corpus-baseline.json` was regenerated: **the per-class metrics are byte-identical**
+  and only the commit changed, so the gate's baseline was always correct and only its provenance
+  label was wrong.
+
+**Scanner configuration, and the coverage it removes.** `.gitguardian.yaml` excludes `baselines/`
+and `docs/samples/`, whose digests and signatures change on every regeneration. That switches off
+secret scanning over files carrying real run evidence — exactly where a redaction regression would
+surface a credential — so the coverage is replaced rather than dropped:
+`tests/phase4/test_sample_hygiene.py` fails on any unredacted credential field, token-shaped value,
+fixture canary, brokered credential value, bearer header, or private key under `docs/samples/`, and
+it is tested against planted leaks so it cannot pass by checking nothing. It reports the committed
+samples clean.
+
+**Test count.** Two test files were added after the 435-test run: `test_corpus_baseline.py`
+(1 test) and `test_sample_hygiene.py` (4 tests). Both passed on their own; the 435 figure above
+does not include them.
+
 ## Known limits
 
 - **No real model was called.** Every model-facing figure in this phase and in Phase 3 describes the

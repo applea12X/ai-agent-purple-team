@@ -1,0 +1,21 @@
+# Secret-scanner configuration (ggshield config v2).
+#
+# These paths hold only public-by-design high-entropy values, which generic entropy detectors
+# flag as secrets:
+#
+# - baselines/     SHA-256 digests of frozen reference documents and corpus metrics, regenerated
+#                  by `purpleloop schema-baseline` and `purpleloop corpus-baseline`.
+# - docs/samples/  reviewer evidence bundles: SHA-256 evidence hashes, Ed25519 signatures, public
+#                  keys, and Inspect attachment keys. Every regeneration produces new values.
+#
+# Excluding docs/samples/ removes scanner coverage from files that carry real run evidence, which is
+# exactly where a redaction regression would surface a credential. That coverage is replaced, not
+# dropped: tests/phase4/test_sample_hygiene.py fails on any unredacted credential field,
+# token-shaped value, fixture canary, bearer header, or private key under docs/samples/, and runs in
+# every PR lane.
+version: 2
+
+secret:
+  ignored_paths:
+    - "baselines/**"
+    - "docs/samples/**"
