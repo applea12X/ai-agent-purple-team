@@ -1,0 +1,339 @@
+{
+  "allowed_adapters": [
+    "control",
+    "http",
+    "browser",
+    "chat",
+    "agent",
+    "tool"
+  ],
+  "allowed_methods": [
+    "GET",
+    "PATCH",
+    "POST"
+  ],
+  "allowed_operations": [
+    "email.send",
+    "agent.ask",
+    "ui.export.create",
+    "fixture.snapshot",
+    "ticket.update",
+    "admin.users.list",
+    "fixture.telemetry",
+    "memory.write",
+    "document.read",
+    "ticket.enrich",
+    "admin.user.role",
+    "fixture.provision",
+    "ticket.assign",
+    "ui.ticket.view",
+    "ui.document.view",
+    "memory.read",
+    "crm.update",
+    "refund.approve",
+    "refund.create",
+    "user.update",
+    "fixture.seed",
+    "fixture.reset",
+    "ui.refund.create",
+    "fixture.teardown",
+    "ticket.read",
+    "link.preview",
+    "export.create",
+    "fixture.defense",
+    "ui.admin.users",
+    "internal.config.read"
+  ],
+  "allowed_side_effects": [
+    "read",
+    "write"
+  ],
+  "approvers": [
+    "local-demo-operator"
+  ],
+  "assets": [
+    {
+      "allowed_resolved_addresses": [
+        "127.0.0.1"
+      ],
+      "asset_id": "supportlab-data",
+      "host": "127.0.0.1",
+      "path_prefix": "/",
+      "port": 28080,
+      "resource_ids": [],
+      "scheme": "http",
+      "tenant_ids": [
+        "org-a",
+        "org-b"
+      ]
+    },
+    {
+      "allowed_resolved_addresses": [
+        "127.0.0.1"
+      ],
+      "asset_id": "supportlab-control",
+      "host": "127.0.0.1",
+      "path_prefix": "/control",
+      "port": 28081,
+      "resource_ids": [],
+      "scheme": "http",
+      "tenant_ids": [
+        "harness"
+      ]
+    }
+  ],
+  "budgets": {
+    "concurrency": 1,
+    "cost_microusd": 1000000,
+    "records": 600,
+    "requests": 600,
+    "retries": 0,
+    "tokens": 200000,
+    "wall_time_seconds": 120.0,
+    "writes": 64
+  },
+  "cleanup_procedure": "fixture-reset",
+  "credential_handles": [
+    "supportlab-admin-a",
+    "supportlab-agent-a",
+    "supportlab-control",
+    "supportlab-customer-a",
+    "supportlab-customer-b"
+  ],
+  "credential_scopes": {
+    "supportlab-admin-a": [
+      "email.send",
+      "ui.export.create",
+      "admin.users.list",
+      "ticket.enrich",
+      "ticket.assign",
+      "ui.ticket.view",
+      "ui.document.view",
+      "memory.read",
+      "refund.approve",
+      "refund.create",
+      "user.update",
+      "ui.admin.users",
+      "internal.config.read",
+      "agent.ask",
+      "ticket.update",
+      "memory.write",
+      "document.read",
+      "admin.user.role",
+      "crm.update",
+      "ui.refund.create",
+      "ticket.read",
+      "link.preview",
+      "export.create"
+    ],
+    "supportlab-agent-a": [
+      "email.send",
+      "ui.export.create",
+      "admin.users.list",
+      "ticket.enrich",
+      "ticket.assign",
+      "ui.ticket.view",
+      "ui.document.view",
+      "memory.read",
+      "refund.approve",
+      "refund.create",
+      "user.update",
+      "ui.admin.users",
+      "internal.config.read",
+      "agent.ask",
+      "ticket.update",
+      "memory.write",
+      "document.read",
+      "admin.user.role",
+      "crm.update",
+      "ui.refund.create",
+      "ticket.read",
+      "link.preview",
+      "export.create"
+    ],
+    "supportlab-control": [
+      "fixture.provision",
+      "fixture.snapshot",
+      "fixture.seed",
+      "fixture.reset",
+      "fixture.teardown",
+      "fixture.defense",
+      "fixture.telemetry"
+    ],
+    "supportlab-customer-a": [
+      "email.send",
+      "ui.export.create",
+      "admin.users.list",
+      "ticket.enrich",
+      "ticket.assign",
+      "ui.ticket.view",
+      "ui.document.view",
+      "memory.read",
+      "refund.approve",
+      "refund.create",
+      "user.update",
+      "ui.admin.users",
+      "internal.config.read",
+      "agent.ask",
+      "ticket.update",
+      "memory.write",
+      "document.read",
+      "admin.user.role",
+      "crm.update",
+      "ui.refund.create",
+      "ticket.read",
+      "link.preview",
+      "export.create"
+    ],
+    "supportlab-customer-b": [
+      "email.send",
+      "ui.export.create",
+      "admin.users.list",
+      "ticket.enrich",
+      "ticket.assign",
+      "ui.ticket.view",
+      "ui.document.view",
+      "memory.read",
+      "refund.approve",
+      "refund.create",
+      "user.update",
+      "ui.admin.users",
+      "internal.config.read",
+      "agent.ask",
+      "ticket.update",
+      "memory.write",
+      "document.read",
+      "admin.user.role",
+      "crm.update",
+      "ui.refund.create",
+      "ticket.read",
+      "link.preview",
+      "export.create"
+    ]
+  },
+  "data_classification": "synthetic",
+  "denied_operations": [],
+  "egress_hosts": [
+    "127.0.0.1"
+  ],
+  "engagement_id": "supportlab-local-demo",
+  "exact_exclusions": [],
+  "issued_at": "2026-09-15T06:50:12.848578Z",
+  "key_id": "supportlab-demo-key",
+  "model_endpoints": [],
+  "owner": "fixture-owner",
+  "phase1": {
+    "defense_profiles": [
+      "object-ownership",
+      "property-allowlist",
+      "schema-validation",
+      "workflow-approval",
+      "upstream-allowlist",
+      "upstream-validation",
+      "retrieval-provenance-guard",
+      "output-sanitization",
+      "function-authorization",
+      "capability-scoping",
+      "prompt-isolation",
+      "debug-endpoints-disabled",
+      "memory-write-guard"
+    ],
+    "max_depth": 16,
+    "max_nodes": 64
+  },
+  "phase2": {
+    "browser_assets": [
+      "supportlab-data"
+    ],
+    "containment_prefix": "purpleloop-supportlab",
+    "database_credential_handle": "supportlab-database",
+    "max_browser_contexts": 32,
+    "ownership": [
+      {
+        "resource_ids": [
+          "ticket-90aea9b9",
+          "ticket-fe289967",
+          "agent-a",
+          "approval-refund-a",
+          "document-5eb17fec",
+          "admin-a",
+          "customer-a",
+          "approval-export-a"
+        ],
+        "tenant_id": "org-a"
+      },
+      {
+        "resource_ids": [
+          "ticket-ed473296",
+          "customer-b",
+          "refund-53759004",
+          "ticket-22ae4548",
+          "agent-b",
+          "document-a2502cb9"
+        ],
+        "tenant_id": "org-b"
+      }
+    ],
+    "ownership_seed": 42,
+    "subresource_origins": []
+  },
+  "phase3": {
+    "cost_microusd_budget": 1000000,
+    "judge_enabled": true,
+    "judge_model_pin": "offline-judge",
+    "max_agent_steps": 8,
+    "max_attacker_depth": 3,
+    "max_attacker_proposals": 8,
+    "max_tool_intents_per_turn": 4,
+    "min_repetitions": 5,
+    "model_assets": [],
+    "model_credential_handle": "supportlab-model",
+    "model_pins": [
+      {
+        "decoding": {
+          "max_output_tokens": 512,
+          "seed": 42,
+          "temperature": 0.0,
+          "top_p": 1.0
+        },
+        "expected_input_tokens_per_call": 187,
+        "expected_output_tokens_per_call": 27,
+        "model_id": "supportlab-scripted",
+        "model_version": "scripted-v1",
+        "pin_id": "offline-scripted",
+        "price_input_microusd_per_1k": 0,
+        "price_output_microusd_per_1k": 0,
+        "provider": "offline",
+        "system_prompt_hash": "003c9aaaa0228ef1e9a792ecb24f337d93cbf8519c4c473809a0992af3ebafb8"
+      },
+      {
+        "decoding": {
+          "max_output_tokens": 512,
+          "seed": 42,
+          "temperature": 0.0,
+          "top_p": 1.0
+        },
+        "expected_input_tokens_per_call": 0,
+        "expected_output_tokens_per_call": 0,
+        "model_id": "supportlab-scripted-judge",
+        "model_version": "scripted-v1",
+        "pin_id": "offline-judge",
+        "price_input_microusd_per_1k": 0,
+        "price_output_microusd_per_1k": 0,
+        "provider": "offline",
+        "system_prompt_hash": "003c9aaaa0228ef1e9a792ecb24f337d93cbf8519c4c473809a0992af3ebafb8"
+      }
+    ],
+    "token_budget": 200000
+  },
+  "redaction_required": true,
+  "required_evidence": [],
+  "retention_days": 7,
+  "schema_version": "1.3.0",
+  "signature": "PRVj0B7B01ra/sqzUo4rwSy33rbPG0bChtYToKKStlz2jta/OD6oAVkMV/B7VvJBtrydAt5rZ48/+N0qyykbDg==",
+  "stop_conditions": [],
+  "stop_on_error": true,
+  "synthetic_secrets": [],
+  "valid_from": "2026-09-15T06:50:12.848578Z",
+  "valid_until": "2026-09-15T08:50:13.848578Z"
+}

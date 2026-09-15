@@ -248,11 +248,16 @@ def advisory_section(summary: RunSummary) -> str:
     )
 
 
+#: Bundle-root files that sit outside the artifact inventory: the inventory itself, and the
+#: attestation statement written about it after it is sealed (reporting.attestation).
+UNINVENTORIED = frozenset({"inventory.json", "attestation.json", "attestation-public.pem"})
+
+
 def inventory(directory: Path, *, complete: bool) -> None:
     files = {
         p.relative_to(directory).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
         for p in sorted(directory.rglob("*"))
-        if p.is_file() and p != directory / "inventory.json"
+        if p.is_file() and p.relative_to(directory).as_posix() not in UNINVENTORIED
     }
     write_json(
         directory / "inventory.json",
@@ -311,7 +316,7 @@ def verify_bundle(directory: Path, *, allow_partial: bool = False) -> dict[str, 
     actual = {
         p.relative_to(directory).as_posix()
         for p in directory.rglob("*")
-        if p.is_file() and p != directory / "inventory.json"
+        if p.is_file() and p.relative_to(directory).as_posix() not in UNINVENTORIED
     }
     if actual != set(artifacts):
         raise BundleError("artifact inventory differs from directory")

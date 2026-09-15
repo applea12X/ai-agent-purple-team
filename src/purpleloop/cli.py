@@ -130,11 +130,13 @@ def offline_complete(
 
 from purpleloop.agent_cli import register as register_agent  # noqa: E402
 from purpleloop.phase1_cli import register  # noqa: E402
+from purpleloop.phase4_cli import register as register_phase4  # noqa: E402
 from purpleloop.supportlab_cli import register as register_supportlab  # noqa: E402
 
 register(app)
 register_supportlab(app)
 register_agent(app)
+register_phase4(app)
 
 if __name__ == "__main__":
     app()

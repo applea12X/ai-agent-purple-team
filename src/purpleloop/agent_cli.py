@@ -12,6 +12,7 @@ import asyncio
 import os
 from collections.abc import Callable
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 
 import typer
@@ -27,21 +28,29 @@ from purpleloop.control.plan_compiler import compile_plan
 from purpleloop.reporting.bundle import inventory, reports, verify_bundle, write_json
 from purpleloop.runtime.demo import ROOT
 from purpleloop.runtime.inspect_bridge import evaluate_runner
-from purpleloop.runtime.repetitions import RunnerFactory, apply_reproducibility, run_repetitions
+from purpleloop.runtime.repetitions import (
+    Execute,
+    RunnerFactory,
+    apply_reproducibility,
+    run_repetitions,
+)
 from purpleloop.runtime.runner import PurpleTeamRunner
 from purpleloop.runtime.supportlab import (
     KEY_ID,
     MODEL_FIXTURE,
+    ComposeSupportlab,
     InProcessSupportlab,
     actor_credentials,
     build_agent_runner,
     supportlab_agent_manifest,
 )
 from purpleloop.schemas.authorization import AuthorizationManifest
-from purpleloop.schemas.phase1 import RunSummary, load_scenario, scenario_paths
+from purpleloop.schemas.phase1 import Phase1Scenario, RunSummary, load_scenario, scenario_paths
 from purpleloop.schemas.phase3 import DecodingParameters, ModelPin
+from purpleloop.schemas.phase4 import StochasticRunOutcome
 from purpleloop.scoring.evaluator_redteam import agreement, load_corpus, resistance
 from purpleloop.scoring.judge import HybridJudge, ScriptedJudge
+from purpleloop.scoring.phase4 import classify_stochastic_failure, reproduction_record
 
 SCENARIOS = ROOT / "scenarios" / "agent"
 REDTEAM = ROOT / "scenarios" / "evaluator-redteam" / "cases.json"
@@ -51,8 +60,37 @@ CREDENTIAL_ENV = "PURPLELOOP_MODEL_API_KEY"
 DirectoryFor = Callable[[int], Path]
 
 
+class AgentFixtureMode(StrEnum):
+    """Where the agent lane's fixture runs.
+
+    ``compose`` closes the WP4.0.7 gap: the agent routes run inside the fixture container image
+    over PostgreSQL, under the same containment as every other route, instead of only in
+    process. The manifest, plan, and adapters are identical either way; only the transport and
+    the database change.
+    """
+
+    IN_PROCESS = "in-process"
+    COMPOSE = "compose"
+
+
 class ModelUnavailableForLane(RuntimeError):
     reason_code = "STOCHASTIC_LANE_UNAVAILABLE"
+
+
+def _write_outcome(output_dir: Path, outcome: StochasticRunOutcome) -> None:
+    """Surface the run's classified outcome. A failure is surfaced, never silently tolerated.
+
+    Always printed. Written to ``outcome.json`` only when the run already created its output
+    directory: a lane that was skipped before it started must leave no bundle behind, and
+    creating a directory just to hold the skip record would break that.
+    """
+    typer.echo(f"OUTCOME {outcome.model_dump_json()}", err=True)
+    if not output_dir.is_dir():
+        return
+    try:
+        write_json(output_dir / "outcome.json", outcome.model_dump(mode="json"))
+    except OSError:  # pragma: no cover - the outcome must never mask the original failure
+        pass
 
 
 def networked_provider(endpoint: str, profile: str) -> tuple[Provider, ModelPin]:
@@ -109,12 +147,16 @@ def _runner_factory(
     pin_id: str,
     endpoint: str | None,
     pin: ModelPin | None,
-) -> tuple[AuthorizationManifest, RunnerFactory]:
+    fixture_mode: AgentFixtureMode = AgentFixtureMode.IN_PROCESS,
+) -> tuple[AuthorizationManifest, RunnerFactory, Execute]:
     manifest = supportlab_agent_manifest(
         manifest_key, seed=seed, judge=judge, model_endpoint=endpoint, model_pin=pin
     )
     verifier = ManifestVerifier({KEY_ID: manifest_key.public_key()})
     verifier.verify(manifest)
+    # The fixture each repetition will run against, created in the factory and started by the
+    # execute wrapper: a compose fixture needs an async start the synchronous factory cannot do.
+    pending: list[InProcessSupportlab | ComposeSupportlab] = []
 
     def factory(index: int) -> tuple[PurpleTeamRunner, Path]:
         tokens = actor_credentials()
@@ -130,20 +172,100 @@ def _runner_factory(
                 other_tenants=("org-b",),
                 resource_id="admin-a",
             )
+        fixture: InProcessSupportlab | ComposeSupportlab
+        if fixture_mode == AgentFixtureMode.COMPOSE:  # pragma: no cover - container lane
+            database = actor_credentials()["customer-b"]
+            fixture = ComposeSupportlab(
+                tokens, control, database, project=f"purpleloop-agent-{index}"
+            )
+        else:
+            fixture = InProcessSupportlab(tokens, control)
+        pending.append(fixture)
         runner = build_agent_runner(
             directory,
             manifest,
             verifier,
             actor_tokens=tokens,
             control=control,
-            fixture=InProcessSupportlab(tokens, control),
+            fixture=fixture,
             model_provider=provider,
             model_pin_id=pin_id,
             **options,
         )
         return runner, directory
 
-    return manifest, factory
+    async def execute(
+        runner: PurpleTeamRunner,
+        scenario: Phase1Scenario,
+        run_manifest: AuthorizationManifest,
+        run_id: str,
+        directory: Path,
+    ) -> RunSummary:
+        fixture = pending.pop()
+        if isinstance(fixture, ComposeSupportlab):  # pragma: no cover - container lane
+            await fixture.start()
+        return await _inspect_execute(runner, scenario, run_manifest, run_id, directory)
+
+    return manifest, factory, execute
+
+
+async def run_offline_scenario(
+    scenario_path: Path,
+    directory: Path,
+    *,
+    seed: int = 42,
+    judge: bool = False,
+    attacker: bool = False,
+) -> RunSummary:
+    """One offline agent scenario through the Inspect bridge; used by smoke and baseline runs."""
+    scenario = load_scenario(scenario_path)
+    key = Ed25519PrivateKey.generate()
+    manifest, factory, execute = _runner_factory(
+        key,
+        lambda index: directory,
+        seed=seed,
+        judge=judge,
+        attacker=attacker,
+        provider=None,
+        pin_id="offline-scripted",
+        endpoint=None,
+        pin=None,
+    )
+    compile_plan(scenario, manifest, lane=AGENT_LANE)
+    runner, run_directory = factory(0)
+    return await execute(runner, scenario, manifest, scenario.scenario_id, run_directory)
+
+
+async def run_offline_corpus(
+    root: Path, *, seed: int = 42
+) -> tuple[list[Phase1Scenario], list[RunSummary]]:
+    """The whole agent corpus offline, one paired run each; the baseline command's engine."""
+    scenarios: list[Phase1Scenario] = []
+    summaries: list[RunSummary] = []
+    key = Ed25519PrivateKey.generate()
+    for path in scenario_paths(SCENARIOS):
+        scenario = load_scenario(path)
+
+        def directory_for(index: int, sid: str = scenario.scenario_id) -> Path:
+            return root / sid
+
+        manifest, factory, _ = _runner_factory(
+            key,
+            directory_for,
+            seed=seed,
+            judge=False,
+            attacker=False,
+            provider=None,
+            pin_id="offline-scripted",
+            endpoint=None,
+            pin=None,
+        )
+        runner, directory = factory(0)
+        summaries.append(
+            await runner.run(scenario, manifest, run_id=scenario.scenario_id, output_dir=directory)
+        )
+        scenarios.append(scenario)
+    return scenarios, summaries
 
 
 def register(app: typer.Typer) -> None:
@@ -157,6 +279,7 @@ def register(app: typer.Typer) -> None:
         repetitions: int = 1,
         endpoint: str | None = None,
         profile: str = "openai-compatible",
+        fixture: AgentFixtureMode = AgentFixtureMode.IN_PROCESS,
     ) -> None:
         """Run one agent scenario, optionally repeated, judged, and probed by the attacker."""
         provider: Provider | None = None
@@ -166,7 +289,7 @@ def register(app: typer.Typer) -> None:
                 provider, pin = networked_provider(endpoint, profile)
             scenario = load_scenario(scenario_path)
             key = Ed25519PrivateKey.generate()
-            manifest, factory = _runner_factory(
+            manifest, factory, execute = _runner_factory(
                 key,
                 lambda index: (
                     output_dir
@@ -183,6 +306,7 @@ def register(app: typer.Typer) -> None:
                 pin_id="networked" if pin else "offline-scripted",
                 endpoint=endpoint,
                 pin=pin,
+                fixture_mode=fixture,
             )
             compile_plan(scenario, manifest, lane=AGENT_LANE)
             report, summaries = asyncio.run(
@@ -192,20 +316,58 @@ def register(app: typer.Typer) -> None:
                     factory,
                     repetitions=repetitions,
                     run_id=scenario.scenario_id,
-                    execute=_inspect_execute,
+                    execute=execute,
                 )
             )
         except ModelUnavailableForLane as exc:
+            _write_outcome(
+                output_dir,
+                classify_stochastic_failure(exc, scenario_id=scenario_path.stem),
+            )
             typer.echo(f"SKIPPED: {exc}", err=True)
             raise typer.Exit(0) from None
         except (OSError, ValueError, RuntimeError) as exc:
+            _write_outcome(
+                output_dir,
+                classify_stochastic_failure(exc, scenario_id=scenario_path.stem),
+            )
             typer.echo(f"FAILED: {exc}", err=True)
             raise typer.Exit(1) from None
+        pin_id = "networked" if pin else "offline-scripted"
         if not summaries:
+            # Per-repetition failures are recorded as exclusions, so a run where every
+            # repetition failed classifies here: on the stochastic lane that is an endpoint
+            # problem, not a scenario result, and the outcome vocabulary keeps them apart.
+            _write_outcome(
+                output_dir,
+                StochasticRunOutcome(
+                    outcome="endpoint-error" if endpoint is not None else "fail",
+                    reason_code="EVERY_REPETITION_EXCLUDED",
+                    detail="; ".join(report.repetitions.exclusion_reasons)[:2000],
+                    scenario_id=scenario.scenario_id,
+                    model_pin_id=pin_id,
+                ),
+            )
             typer.echo("FAILED: every repetition was excluded", err=True)
             raise typer.Exit(1)
         enriched = apply_reproducibility(summaries[0], report)
         write_json(output_dir / "stochastic.json", report.model_dump(mode="json"))
+        if repetitions > 1:
+            # The stochastic lane's own replay number, beside -- never inside -- the
+            # deterministic lanes' replay figure.
+            write_json(
+                output_dir / "reproduction.json",
+                reproduction_record(report.repetitions).model_dump(mode="json"),
+            )
+        _write_outcome(
+            output_dir,
+            StochasticRunOutcome(
+                outcome="pass" if enriched.status == "passed" else "fail",
+                reason_code=enriched.reason or enriched.status.upper(),
+                scenario_id=scenario.scenario_id,
+                model_pin_id=pin_id,
+            ),
+        )
         typer.echo(
             f"{enriched.status.upper()} n={report.repetitions.completed} "
             f"attack_success={report.attack_success.value:.3f} "
@@ -259,6 +421,7 @@ def register(app: typer.Typer) -> None:
         repetitions: int = 1,
         judge: bool = True,
         attacker: bool = True,
+        fixture: AgentFixtureMode = AgentFixtureMode.IN_PROCESS,
     ) -> None:
         """Run the whole agent corpus offline, write the suite bundle, and verify it."""
         root = output_dir / datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
@@ -277,7 +440,7 @@ def register(app: typer.Typer) -> None:
                 def directory_for(index: int, sid: str = scenario.scenario_id) -> Path:
                     return root / bundle_name(sid, index)
 
-                manifest, factory = _runner_factory(
+                manifest, factory, execute = _runner_factory(
                     key,
                     directory_for,
                     seed=seed,
@@ -287,6 +450,7 @@ def register(app: typer.Typer) -> None:
                     pin_id="offline-scripted",
                     endpoint=None,
                     pin=None,
+                    fixture_mode=fixture,
                 )
                 report, runs = await run_repetitions(
                     scenario,
@@ -294,7 +458,7 @@ def register(app: typer.Typer) -> None:
                     factory,
                     repetitions=repetitions,
                     run_id=scenario.scenario_id,
-                    execute=_inspect_execute,
+                    execute=execute,
                 )
                 if not runs:
                     raise RuntimeError(f"{scenario.scenario_id}: every repetition was excluded")

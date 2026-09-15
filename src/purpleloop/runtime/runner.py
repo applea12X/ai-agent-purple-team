@@ -457,9 +457,6 @@ class PurpleTeamRunner:
         await self.stage(Stage.ATTACK if name == "baseline" else Stage.REPLAY)
         attack_start = self.runtime.budgets.used
         responses, action_ids, susceptible = await self.execute_steps("attack")
-        extra, extra_ids = await self.run_proposals(attack_start)
-        responses.extend(extra)
-        action_ids = (*action_ids, *extra_ids)
         after = await self.controller.call("snapshot")
         snapshot_ids = self.controller.last_evidence_ids
         self.snapshots[f"{name}-after"] = after
@@ -494,6 +491,22 @@ class PurpleTeamRunner:
             "DETECTORS_SCORED",
             {"results": [d.model_dump(mode="json") for d in detectors]},
         )
+        if self.attacker is not None:
+            # Adaptive-attacker outcomes are advisory (ADR 0009), so the probes run only after
+            # every binding measurement of the leg is taken. Run earlier, their writes landed in
+            # the scored snapshot, their responses in the oracle input, and their telemetry in
+            # the side-effect count -- an advisory component deciding a binding verdict. They
+            # still execute through SafetyRuntime and are charged to the leg; the reset before
+            # the next leg restores seeded state. No new Stage exists for them because the
+            # Phase 1 fault-injection suite parametrizes over every Stage member, so the boundary
+            # is a lifecycle event rather than a stage. It is not a PROPOSAL event: those require
+            # an operation and a decision, and a null placeholder would fake completeness.
+            self.record(
+                EventKind.LIFECYCLE,
+                "ADVISORY_PROBES_AFTER_BINDING",
+                {"note": "actions after this event are advisory probes excluded from scoring"},
+            )
+            await self.run_proposals(attack_start)
         return LegResult(
             seed_hash=seed_hash,
             utility=utility,

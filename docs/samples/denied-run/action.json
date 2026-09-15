@@ -1,0 +1,22 @@
+{
+  "action_id": "sample-read",
+  "adapter": "chat",
+  "budget": {
+    "cost_microusd": 0,
+    "records": 1,
+    "requests": 1,
+    "retries": 0,
+    "tokens": 0,
+    "writes": 0
+  },
+  "credential_handle": "fixture-control",
+  "idempotency_key": "sample-read",
+  "method": "GET",
+  "operation": "canary.export",
+  "schema_version": "1.1.0",
+  "side_effect": "read",
+  "target": {
+    "tenant_id": "tenant-a",
+    "url": "http://127.0.0.1:18080/"
+  }
+}

@@ -57,3 +57,40 @@ agent-stochastic:
 	uv run purpleloop agent-run scenarios/agent/agent-indirect-ticket.yaml \
 		artifacts/agent-stochastic --repetitions 5 --judge \
 		--endpoint "$$PURPLELOOP_MODEL_ENDPOINT" --profile "$${PURPLELOOP_MODEL_PROFILE:-openai-compatible}"
+
+.PHONY: phase4-check pr-check smoke-demo holdout-check gates corpus-current audit-export
+phase4-check: lint typecheck test
+
+# The fast PR lane: full deterministic quality gate with a JUnit report, the cross-lane smoke
+# demo, current corpus metrics, and the five enforcing gates over the smoke bundle.
+pr-check: lint typecheck
+	uv run pytest --junitxml=artifacts/junit.xml
+	uv run purpleloop smoke-demo --output-dir artifacts/smoke
+	uv run purpleloop corpus-baseline --output artifacts/corpus-current.json
+	uv run purpleloop gates "$$(ls -d artifacts/smoke/*/ | tail -1)" \
+		--junit artifacts/junit.xml --risk-current artifacts/corpus-current.json \
+		--output artifacts/gates.json
+
+smoke-demo:
+	uv run purpleloop smoke-demo
+
+holdout-check:
+	uv run purpleloop holdout-check
+
+corpus-current:
+	uv run purpleloop corpus-baseline --output artifacts/corpus-current.json
+
+gates:
+	uv run purpleloop gates "$$(ls -d artifacts/smoke/*/ | tail -1)" \
+		--junit artifacts/junit.xml --risk-current artifacts/corpus-current.json
+
+# The release lane, runnable locally: held-out mutations, an attested demo bundle, and its
+# audit export. CI's release job runs the same commands.
+.PHONY: release-check
+release-check: holdout-check
+	uv run purpleloop agent-demo --output-dir artifacts/release-demo
+	uv run purpleloop attest-bundle "$$(ls -d artifacts/release-demo/*/ | tail -1)" \
+		--builder "local-release" --commit "$$(git rev-parse HEAD)"
+	uv run purpleloop verify-bundle "$$(ls -d artifacts/release-demo/*/ | tail -1)" --attestation
+	uv run purpleloop audit-export "$$(ls -d artifacts/release-demo/*/ | tail -1)" \
+		artifacts/release-audit.json

@@ -1,0 +1,107 @@
+{
+  "schema_version": "1.4.0",
+  "cases": [
+    {
+      "case_id": "host-alias-localhost",
+      "description": "The loopback alias 'localhost' in place of the signed exact host",
+      "field": "host",
+      "value": "localhost"
+    },
+    {
+      "case_id": "host-adjacent-loopback",
+      "description": "An adjacent loopback address the manifest never signed",
+      "field": "host",
+      "value": "127.0.0.2"
+    },
+    {
+      "case_id": "host-trailing-garbage",
+      "description": "A host with an appended label, so a prefix match would wrongly pass",
+      "field": "host",
+      "value": "127.0.0.1.attacker.invalid"
+    },
+    {
+      "case_id": "scheme-upgrade",
+      "description": "HTTPS against a fixture signed for exact HTTP",
+      "field": "scheme",
+      "value": "https"
+    },
+    {
+      "case_id": "port-control-plane",
+      "description": "The data-plane operation aimed at the control-plane port",
+      "field": "port",
+      "value": 28081
+    },
+    {
+      "case_id": "port-unsigned",
+      "description": "A port no signed asset carries",
+      "field": "port",
+      "value": 28090
+    },
+    {
+      "case_id": "path-query-widening",
+      "description": "A query string appended to the trusted tool path",
+      "field": "query",
+      "value": "admin=1"
+    },
+    {
+      "case_id": "path-traversal",
+      "description": "Dot-dot traversal out of the trusted tool path",
+      "field": "path",
+      "value": "/api/tickets/../admin"
+    },
+    {
+      "case_id": "cross-tenant-read",
+      "description": "The other organization claimed as the tenant for an org-a resource",
+      "field": "tenant_id",
+      "value": "org-b"
+    },
+    {
+      "case_id": "unsigned-resource",
+      "description": "A resource id absent from the signed ownership map",
+      "field": "resource_id",
+      "value": "ticket-zzzzzz"
+    },
+    {
+      "case_id": "operation-not-granted",
+      "description": "An operation outside the signed allowed set",
+      "field": "operation",
+      "value": "ticket.delete"
+    },
+    {
+      "case_id": "method-widening",
+      "description": "POST claimed for a read-only registered tool",
+      "field": "method",
+      "value": "POST"
+    },
+    {
+      "case_id": "side-effect-widening",
+      "description": "A write side effect claimed for a read-only registered tool",
+      "field": "side_effect",
+      "value": "write"
+    },
+    {
+      "case_id": "adapter-not-granted",
+      "description": "An adapter the manifest never allows",
+      "field": "adapter",
+      "value": "shell"
+    },
+    {
+      "case_id": "database-credential",
+      "description": "The database credential used as an attack credential",
+      "field": "credential_handle",
+      "value": "supportlab-database"
+    },
+    {
+      "case_id": "unknown-credential",
+      "description": "A credential handle the manifest never issued",
+      "field": "credential_handle",
+      "value": "supportlab-superuser"
+    },
+    {
+      "case_id": "control-credential-on-data-plane",
+      "description": "The control-plane credential driving a data-plane operation",
+      "field": "credential_handle",
+      "value": "supportlab-control"
+    }
+  ]
+}

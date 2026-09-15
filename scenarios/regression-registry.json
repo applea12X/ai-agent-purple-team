@@ -1,0 +1,293 @@
+{
+  "schema_version": "1.4.0",
+  "entries": [
+    {
+      "finding_class": "bola",
+      "scenario_id": "bola",
+      "test": "tests/phase1/test_loop.py::test_all_five_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "direct-injection",
+      "scenario_id": "direct-injection",
+      "test": "tests/phase1/test_loop.py::test_all_five_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "indirect-injection",
+      "scenario_id": "indirect-injection",
+      "test": "tests/phase1/test_loop.py::test_all_five_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "mass-assignment",
+      "scenario_id": "mass-assignment",
+      "test": "tests/phase1/test_loop.py::test_all_five_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "refund",
+      "scenario_id": "refund",
+      "test": "tests/phase1/test_loop.py::test_all_five_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "bfla-admin-users-ui",
+      "scenario_id": "bfla-admin-users-ui",
+      "test": "tests/phase2/test_supportlab_loop.py::test_full_corpus_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "bfla-admin-users",
+      "scenario_id": "bfla-admin-users",
+      "test": "tests/phase2/test_supportlab_loop.py::test_full_corpus_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "bfla-role-change",
+      "scenario_id": "bfla-role-change",
+      "test": "tests/phase2/test_supportlab_loop.py::test_full_corpus_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "bola-document-ui",
+      "scenario_id": "bola-document-ui",
+      "test": "tests/phase2/test_supportlab_loop.py::test_full_corpus_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "bola-document",
+      "scenario_id": "bola-document",
+      "test": "tests/phase2/test_supportlab_loop.py::test_full_corpus_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "bola-ticket-ui",
+      "scenario_id": "bola-ticket-ui",
+      "test": "tests/phase2/test_supportlab_loop.py::test_full_corpus_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "bola-ticket",
+      "scenario_id": "bola-ticket",
+      "test": "tests/phase2/test_supportlab_loop.py::test_full_corpus_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "cross-role-assign",
+      "scenario_id": "cross-role-assign",
+      "test": "tests/phase2/test_supportlab_loop.py::test_full_corpus_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "cross-tenant-approval",
+      "scenario_id": "cross-tenant-approval",
+      "test": "tests/phase2/test_supportlab_loop.py::test_full_corpus_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "export-approval-ui",
+      "scenario_id": "export-approval-ui",
+      "test": "tests/phase2/test_supportlab_loop.py::test_full_corpus_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "export-approval",
+      "scenario_id": "export-approval",
+      "test": "tests/phase2/test_supportlab_loop.py::test_full_corpus_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "mass-assignment-credit",
+      "scenario_id": "mass-assignment-credit",
+      "test": "tests/phase2/test_supportlab_loop.py::test_full_corpus_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "mass-assignment-org",
+      "scenario_id": "mass-assignment-org",
+      "test": "tests/phase2/test_supportlab_loop.py::test_full_corpus_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "misconfig-inventory",
+      "scenario_id": "misconfig-inventory",
+      "test": "tests/phase2/test_supportlab_loop.py::test_full_corpus_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "refund-approval-ui",
+      "scenario_id": "refund-approval-ui",
+      "test": "tests/phase2/test_supportlab_loop.py::test_full_corpus_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "refund-approval",
+      "scenario_id": "refund-approval",
+      "test": "tests/phase2/test_supportlab_loop.py::test_full_corpus_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "ssrf-link-preview",
+      "scenario_id": "ssrf-link-preview",
+      "test": "tests/phase2/test_supportlab_loop.py::test_full_corpus_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "unsafe-upstream-consumption",
+      "scenario_id": "unsafe-upstream-consumption",
+      "test": "tests/phase2/test_supportlab_loop.py::test_full_corpus_paired_loops",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-approval-spoofing",
+      "scenario_id": "agent-approval-spoofing",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-canary-exfiltration",
+      "scenario_id": "agent-canary-exfiltration",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-confused-deputy",
+      "scenario_id": "agent-confused-deputy",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-covert-channel",
+      "scenario_id": "agent-covert-channel",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-direct-injection",
+      "scenario_id": "agent-direct-injection",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-encoded-injection",
+      "scenario_id": "agent-encoded-injection",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-excessive-agency",
+      "scenario_id": "agent-excessive-agency",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-goal-hijack",
+      "scenario_id": "agent-goal-hijack",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-indirect-api-response",
+      "scenario_id": "agent-indirect-api-response",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-indirect-document",
+      "scenario_id": "agent-indirect-document",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-indirect-html",
+      "scenario_id": "agent-indirect-html",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-indirect-inter-agent",
+      "scenario_id": "agent-indirect-inter-agent",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-indirect-log",
+      "scenario_id": "agent-indirect-log",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-indirect-markdown",
+      "scenario_id": "agent-indirect-markdown",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-indirect-ticket",
+      "scenario_id": "agent-indirect-ticket",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-indirect-tool-description",
+      "scenario_id": "agent-indirect-tool-description",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-memory-persistence",
+      "scenario_id": "agent-memory-persistence",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-memory-poisoning",
+      "scenario_id": "agent-memory-poisoning",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-multilingual-injection",
+      "scenario_id": "agent-multilingual-injection",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-multiturn-injection",
+      "scenario_id": "agent-multiturn-injection",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-rag-poisoning",
+      "scenario_id": "agent-rag-poisoning",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-schema-injection",
+      "scenario_id": "agent-schema-injection",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-system-prompt-leakage",
+      "scenario_id": "agent-system-prompt-leakage",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-tool-misuse",
+      "scenario_id": "agent-tool-misuse",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    },
+    {
+      "finding_class": "agent-unsafe-output",
+      "scenario_id": "agent-unsafe-output",
+      "test": "tests/phase3/test_agent_corpus.py::test_corpus_metrics_over_the_whole_agent_corpus",
+      "status": "covered"
+    }
+  ]
+}

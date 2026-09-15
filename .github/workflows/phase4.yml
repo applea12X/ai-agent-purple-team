@@ -1,0 +1,126 @@
+name: phase4
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  schedule:
+    # Nightly, for the real-model stochastic lane only. It supersedes phase3.yml's stochastic
+    # job as the maintained nightly; that file is not edited, per the standing rule that
+    # earlier lanes stay unchanged.
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  # WP4.1 — the fast PR lane: deterministic, no model credentials, evidence uploaded on both
+  # success and failure, and the five enforcing gates run against the smoke bundle. The job
+  # asserts no model credential is present so a leak into the PR lane is loud.
+  pr-fast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - name: Assert the PR lane holds no model credential
+        run: |
+          if [ -n "$PURPLELOOP_MODEL_API_KEY" ] || [ -n "$PURPLELOOP_MODEL_ENDPOINT" ]; then
+            echo "::error::model credentials must never reach the PR lane"
+            exit 1
+          fi
+      - run: uv run ruff check . && uv run ruff format --check .
+      - run: uv run mypy
+      - run: uv run pytest --junitxml=artifacts/junit.xml
+      - run: uv run purpleloop smoke-demo --output-dir artifacts/smoke
+      - run: uv run purpleloop corpus-baseline --output artifacts/corpus-current.json
+      - name: Enforcing gates (ADR 0013)
+        run: |
+          uv run purpleloop gates "$(ls -d artifacts/smoke/*/ | tail -1)" \
+            --junit artifacts/junit.xml \
+            --risk-current artifacts/corpus-current.json \
+            --output artifacts/gates.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase4-pr-evidence
+          path: artifacts/
+
+  # WP4.2 — nightly and manual real-model lane. Credentials come from repository secrets; a
+  # missing credential is a recorded skip, never a silent fallback; every non-pass outcome is
+  # classified (outcome.json) and surfaced as a failed job rather than tolerated.
+  nightly-stochastic:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PURPLELOOP_MODEL_API_KEY: ${{ secrets.PURPLELOOP_MODEL_API_KEY }}
+      PURPLELOOP_MODEL_ENDPOINT: ${{ vars.PURPLELOOP_MODEL_ENDPOINT }}
+      PURPLELOOP_MODEL_ID: ${{ vars.PURPLELOOP_MODEL_ID }}
+      PURPLELOOP_MODEL_PROFILE: ${{ vars.PURPLELOOP_MODEL_PROFILE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - name: Stochastic lane (>=5 repetitions, adaptive attacker, judge)
+        run: |
+          if [ -z "$PURPLELOOP_MODEL_ENDPOINT" ]; then
+            echo "::notice::PURPLELOOP_MODEL_ENDPOINT is unset; stochastic lane skipped"
+            exit 0
+          fi
+          set +e
+          uv run purpleloop agent-run scenarios/agent/agent-indirect-ticket.yaml \
+            artifacts/nightly --repetitions 5 --judge --attacker \
+            --endpoint "$PURPLELOOP_MODEL_ENDPOINT" \
+            --profile "${PURPLELOOP_MODEL_PROFILE:-openai-compatible}"
+          status=$?
+          set -e
+          if [ -f artifacts/nightly/outcome.json ]; then
+            echo "classified outcome:"
+            cat artifacts/nightly/outcome.json
+          fi
+          exit $status
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase4-nightly-evidence
+          path: artifacts/
+
+  # WP4.3 — the release lane: held-out mutations (kept out of every tuning path and run only
+  # here), an attested full-corpus demo bundle, and its audit export.
+  release:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - run: uv run purpleloop holdout-check
+      - run: uv run purpleloop agent-demo --output-dir artifacts/release-demo
+      - name: Attest, verify, and export
+        env:
+          PURPLELOOP_ATTESTATION_KEY: ${{ secrets.PURPLELOOP_ATTESTATION_KEY }}
+        run: |
+          BUNDLE="$(ls -d artifacts/release-demo/*/ | tail -1)"
+          if [ -n "$PURPLELOOP_ATTESTATION_KEY" ]; then
+            printf '%s' "$PURPLELOOP_ATTESTATION_KEY" > /tmp/attest-key.pem
+            uv run purpleloop attest-bundle "$BUNDLE" --key-path /tmp/attest-key.pem \
+              --key-id ci-release --builder "github-actions-${{ github.run_id }}" \
+              --commit "${{ github.sha }}"
+            rm -f /tmp/attest-key.pem
+          else
+            echo "::notice::no CI attestation key; signing with an ephemeral key, recorded as such"
+            uv run purpleloop attest-bundle "$BUNDLE" \
+              --builder "github-actions-${{ github.run_id }}" --commit "${{ github.sha }}"
+          fi
+          uv run purpleloop verify-bundle "$BUNDLE" --attestation
+          uv run purpleloop audit-export "$BUNDLE" artifacts/release-audit.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase4-release-evidence
+          path: artifacts/

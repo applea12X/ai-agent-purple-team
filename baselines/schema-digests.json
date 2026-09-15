@@ -1,0 +1,12 @@
+{
+  "digests": {
+    "authorization-manifest-1.3": "e7d5ab431990e04600edd2c3a13eb5038985ebcc105e3a230adcc8362683c20e",
+    "authorization-manifest-1.4": "f9cb2c3562bff0185a3eea60c16dae6076413b58eedd3c1f555a7022c275f2c5",
+    "evidence-event-1.1": "c375019c529c6bcf39fec69238cb01a02ac4a4221b537a3bdaf5dcb1ad0f8d1b",
+    "run-attestation-1.0": "ae3037f622bcc8539c21a46e280cf2d515453e44a21792bcd999c745276b2029",
+    "run-summary-1.3": "8c6b7fe47b19cef1fc6e2b14864c522326c32b147682c871633a5edffc9cc499",
+    "scenario-1.3": "b42994283c0abc87025ecc06c39ce80a048ab7d32f7ac2586d2459a2578eb16a"
+  },
+  "recorded_at": "2026-09-15T06:17:08.106277+00:00",
+  "schema_version": "1.4.0"
+}

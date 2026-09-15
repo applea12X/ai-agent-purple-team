@@ -71,6 +71,31 @@ cannot reach one. The stochastic lane is opt-in (`make agent-stochastic` with
 `PURPLELOOP_MODEL_ENDPOINT`, and `PURPLELOOP_MODEL_API_KEY` for a hosted API); a missing credential
 is a recorded skip and never a silent fall back to the offline provider.
 
+Phase 4 adds the CI quality system and release machinery: a fast cross-lane smoke demo, five
+enforcing gates, signed run attestations, a self-contained audit export, a held-out mutation
+set, and a regression registry mapping every accepted finding to its pinning test:
+
+```console
+make phase4-check
+uv run purpleloop smoke-demo            # 14 scenarios across all three lanes, in process
+uv run purpleloop holdout-check         # 17 near-miss mutations; every one must be denied
+make pr-check                           # what the PR lane runs, including the five gates
+make release-check                      # holdout + attested full-corpus demo + audit export
+```
+
+Every complete bundle can carry a signed attestation binding it to the exact code, corpus, and
+model pins that produced it, verifiable offline:
+
+```console
+uv run purpleloop attest-bundle out/agent-run --commit "$(git rev-parse HEAD)"
+uv run purpleloop verify-bundle out/agent-run --attestation
+uv run purpleloop audit-export out/agent-run out/audit.json
+```
+
+Fixed sample artifact sets for reviewers — a passing attested run, an admission-denied run,
+and a labelled evidence-integrity incident — live in [docs/samples](docs/samples), with the
+timed walkthrough protocol in [docs/reviewer-walkthrough.md](docs/reviewer-walkthrough.md).
+
 Building the fixture image pulls `python:3.12-slim` and `ghcr.io/astral-sh/uv` from public
 registries, so the first `phase1-demo` needs network access. Evaluation itself is fully offline
 and needs no cloud credentials.
@@ -161,15 +186,36 @@ The judge runs only where a deterministic oracle abstained. Its input is typed, 
 delimited; its citations are validated against what was supplied; abstention is a first-class
 outcome; and its verdict is advisory by construction.
 
+## Phase 4 architecture
+
+Phase 4 adds the first real-model lanes and the first enforcing CI gates at the same time, and
+keeps them apart by construction: **gates read deterministic verdicts only**. Five gate classes
+— scope bypass, critical regression, schema drift, budget failure, and a pre-registered
+per-risk-class regression test — are pure decision functions that CI and the unit tests share,
+each proven to block by a deliberately failing branch (ADR 0013). The nightly lane classifies
+every real-model run into a closed outcome vocabulary so an endpoint error is never triaged as
+a scenario failure, and reports its own reproduction rate beside — never inside — the
+deterministic lanes' replay number. Run attestations (ADR 0012) bind a bundle to the exact
+code, corpus, and pins that produced it using the same Ed25519/JCS machinery as the manifest,
+with the trust model stated at exactly its real strength. **No number produced only by the
+offline stand-in is presented as evidence about a real model**; the acceptance record says
+which runs have actually happened.
+
 ## Documentation
 
 - [Product requirements and delivery plan](planning/PRD.md) and the
-  [Phase 2](planning/phase2-plan.md) and [Phase 3](planning/phase3-plan.md) plans
+  [Phase 2](planning/phase2-plan.md), [Phase 3](planning/phase3-plan.md), and
+  [Phase 4](planning/phase4-plan.md) plans
 - [Architecture](docs/architecture.md) and [threat model](docs/threat-model.md)
 - [Rules of engagement](docs/rules-of-engagement.md)
 - Designs: [Phase 1](docs/phase1-plan.md), [Phase 2](docs/phase2-plan.md),
-  [Phase 3](docs/phase3-plan.md), and the
+  [Phase 3](docs/phase3-plan.md), [Phase 4](docs/phase4-plan.md), and the
   [evaluation methodology](docs/evaluation-methodology.md)
 - Acceptance records: [Phase 0](docs/phase0-acceptance.md), [Phase 1](docs/phase1-acceptance.md),
-  [Phase 2](docs/phase2-acceptance.md), and [Phase 3](docs/phase3-acceptance.md)
+  [Phase 2](docs/phase2-acceptance.md), [Phase 3](docs/phase3-acceptance.md), and
+  [Phase 4](docs/phase4-acceptance.md)
+- Operations: [retention policy](docs/retention-policy.md),
+  [incident runbook](docs/incident-runbook.md),
+  [reviewer walkthrough](docs/reviewer-walkthrough.md), and the
+  [gate baselines](baselines/README.md)
 - Decision records in [docs/adr](docs/adr)

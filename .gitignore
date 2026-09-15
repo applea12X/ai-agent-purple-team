@@ -32,3 +32,8 @@ traces/
 *.log
 *.parquet
 *.duckdb
+
+# Committed sample artifact sets for the reviewer walkthrough (docs/reviewer-walkthrough.md).
+# These are deliberate exceptions: fixed, verified evidence bundles a reviewer inspects offline.
+!docs/samples/
+!docs/samples/**

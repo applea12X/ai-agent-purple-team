@@ -585,7 +585,33 @@ it. No stochastic result may gate a release-blocking invariant.
 - The deterministic lanes replay exactly as before; the stochastic lane reports its own measured
   variance instead of claiming determinism.
 
-### Phase 4 — CI quality system and portfolio release
+### Phase 4 — CI quality system and portfolio release — implemented (2026-09-15); real-model checkpoints open
+
+The implemented design is documented in `docs/phase4-plan.md`; the measured results are in
+`docs/phase4-acceptance.md`. Both are authoritative over the pre-implementation task list that
+this section carries below.
+
+Checkpoint — measured:
+
+- 435 tests pass with 3 gated skips, 88.73% branch coverage; the Phase 0/1, 2, and 3 suites pass
+  unchanged. One further test was added after that run and passed on its own.
+- The five enforcing gates pass over the smoke bundle, and each of the five gate classes blocks
+  alone, with its intended reason, when a violation is injected through the same command CI
+  runs. CI-observed red branches have **not** been pushed.
+- Regression coverage for accepted findings: 48 of 48 (1.0), from the registry, at corpus-test
+  granularity.
+- Smoke lane: 14 of 14 across all three lanes in 11.72 s against a 600 s target. Holdout: 17 of
+  17 near-miss mutations denied, base action permitted.
+- WP4.0.7 closed: the agent corpus passes 25 of 25 on the compose fixture, agreeing with in-process
+  runs on 25 of 25 statuses and oracle hashes.
+- A pre-existing Phase 3 defect was found and fixed: attacker probes ran before binding scoring
+  and decided verdicts. The corrected executed-unauthorized-side-effects figure is mean 0.96
+  (previously published as 2.96).
+
+**Open:** everything that needs a real model endpoint (a real stochastic run, real API cost, a real
+judge, the compromised-model property against a real model), the CI-observed red-branch runs,
+precision on a human-adjudicated sample, and the independent-reviewer session. Each is recorded
+as not yet run, not as met.
 
 #### WP4.0 — Debt carried out of Phase 3
 

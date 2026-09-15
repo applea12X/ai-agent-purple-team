@@ -1,0 +1,125 @@
+{
+  "classes": [
+    {
+      "defended_unauthorized_side_effects": 0,
+      "false_positives": 0,
+      "negative_controls": 1,
+      "risk_class": "approval-spoofing",
+      "scenarios": 1,
+      "seeded_false_negatives": 0,
+      "seeded_true_positives": 1
+    },
+    {
+      "defended_unauthorized_side_effects": 0,
+      "false_positives": 0,
+      "negative_controls": 1,
+      "risk_class": "canary-exfiltration",
+      "scenarios": 1,
+      "seeded_false_negatives": 0,
+      "seeded_true_positives": 1
+    },
+    {
+      "defended_unauthorized_side_effects": 0,
+      "false_positives": 0,
+      "negative_controls": 1,
+      "risk_class": "cascading-failure",
+      "scenarios": 1,
+      "seeded_false_negatives": 0,
+      "seeded_true_positives": 1
+    },
+    {
+      "defended_unauthorized_side_effects": 0,
+      "false_positives": 0,
+      "negative_controls": 2,
+      "risk_class": "confused-deputy",
+      "scenarios": 2,
+      "seeded_false_negatives": 0,
+      "seeded_true_positives": 2
+    },
+    {
+      "defended_unauthorized_side_effects": 0,
+      "false_positives": 0,
+      "negative_controls": 1,
+      "risk_class": "covert-channel",
+      "scenarios": 1,
+      "seeded_false_negatives": 0,
+      "seeded_true_positives": 1
+    },
+    {
+      "defended_unauthorized_side_effects": 0,
+      "false_positives": 0,
+      "negative_controls": 2,
+      "risk_class": "excessive-agency",
+      "scenarios": 2,
+      "seeded_false_negatives": 0,
+      "seeded_true_positives": 2
+    },
+    {
+      "defended_unauthorized_side_effects": 0,
+      "false_positives": 0,
+      "negative_controls": 1,
+      "risk_class": "goal-hijacking",
+      "scenarios": 1,
+      "seeded_false_negatives": 0,
+      "seeded_true_positives": 1
+    },
+    {
+      "defended_unauthorized_side_effects": 0,
+      "false_positives": 0,
+      "negative_controls": 1,
+      "risk_class": "memory-poisoning",
+      "scenarios": 1,
+      "seeded_false_negatives": 0,
+      "seeded_true_positives": 1
+    },
+    {
+      "defended_unauthorized_side_effects": 0,
+      "false_positives": 0,
+      "negative_controls": 11,
+      "risk_class": "prompt-injection",
+      "scenarios": 11,
+      "seeded_false_negatives": 0,
+      "seeded_true_positives": 11
+    },
+    {
+      "defended_unauthorized_side_effects": 0,
+      "false_positives": 0,
+      "negative_controls": 1,
+      "risk_class": "rag-poisoning",
+      "scenarios": 1,
+      "seeded_false_negatives": 0,
+      "seeded_true_positives": 1
+    },
+    {
+      "defended_unauthorized_side_effects": 0,
+      "false_positives": 0,
+      "negative_controls": 1,
+      "risk_class": "schema-injection",
+      "scenarios": 1,
+      "seeded_false_negatives": 0,
+      "seeded_true_positives": 1
+    },
+    {
+      "defended_unauthorized_side_effects": 0,
+      "false_positives": 0,
+      "negative_controls": 1,
+      "risk_class": "system-prompt-leakage",
+      "scenarios": 1,
+      "seeded_false_negatives": 0,
+      "seeded_true_positives": 1
+    },
+    {
+      "defended_unauthorized_side_effects": 0,
+      "false_positives": 0,
+      "negative_controls": 1,
+      "risk_class": "unsafe-output-handling",
+      "scenarios": 1,
+      "seeded_false_negatives": 0,
+      "seeded_true_positives": 1
+    }
+  ],
+  "commit": "fa2b3e217892f3e3cd39d46e0e23073509871c5f",
+  "corpus": "scenarios/agent",
+  "recorded_at": "2026-09-15T06:17:45.602215Z",
+  "schema_version": "1.4.0"
+}
