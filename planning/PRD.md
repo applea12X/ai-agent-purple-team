@@ -487,7 +487,11 @@ Checkpoint — measured:
   named and the calibration was not re-tuned. API cost is a measured zero because the lane is
   offline.
 - Deterministic lanes replay exactly as before; the agent lane replayed 75/75.
-- 337 tests pass, 88.52% branch coverage; Phase 0's 133 and Phase 2's 37 pass unchanged.
+- 339 tests pass, 88.53% branch coverage; Phase 0's 133 and Phase 2's 37 pass unchanged.
+- Container lane (run after the in-process record): 9 container-gated tests pass, the 18-scenario
+  Phase 2 demo verifies on PostgreSQL and Chromium, and the agent corpus passes 25/25 against
+  PostgreSQL with oracle hashes identical to SQLite. That run found and fixed a defect that made
+  the agent surface unseedable on PostgreSQL; the in-process figures had been true only for SQLite.
 
 **Known limit carried out of this phase:** no real model was called. Every number above was
 produced with a deterministic susceptibility stand-in, and the judge figures measure the harness's
@@ -626,6 +630,11 @@ Smaller items, each cheap and none blocking:
   unexpected-code-execution finding; it is covered as a containment property instead. Adding such a
   surface is a fixture capability change with its own containment story and belongs in Phase 5, if
   anywhere.
+- **The agent routes have not run inside the fixture container image.** The agent corpus passed
+  against a real PostgreSQL container with the application in process, and the Phase 2 routes run in
+  the image via `supportlab-demo`, but there is no compose stack for the agent lane. Add an
+  `agent-demo --fixture compose` path so the agent surface is exercised under the same containment
+  as every other route.
 - **Retrieval is lexical, not embedding-based** (ADR 0011). If a later phase adds vector retrieval,
   retrieval moves into the stochastic class and must then report its own replay rate separately.
 

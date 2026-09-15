@@ -13,10 +13,11 @@ in this document**, and §"Known limits" says exactly what that costs.
 Command: `make phase3-check`
 
 - Ruff lint and format checks passed; mypy strict passed for 73 source files.
-- **337 tests passed, 2 skipped. Branch-aware coverage 88.52%** against the 85% floor.
+- **339 tests passed, 3 skipped. Branch-aware coverage 88.53%** against the 85% floor.
 
-The two skips are the container-lane isolation test and the Phase 1 container test, both gated
-behind `PURPLELOOP_CONTAINER_TESTS=1`, unchanged from Phase 2.
+The three skips are gated rather than unexercised: the Phase 2 and Phase 1 container tests
+(`PURPLELOOP_CONTAINER_TESTS=1`) and the cross-engine agent hash test, which additionally needs
+`PURPLELOOP_TEST_POSTGRES_DSN`. All three were run and passed on the container lane below.
 
 ## Prior suites unchanged
 
@@ -28,6 +29,27 @@ behind `PURPLELOOP_CONTAINER_TESTS=1`, unchanged from Phase 2.
   literal. Agent tables join the scored projection only on the agent lane.
 - Manifest 1.0, 1.1, and 1.2 documents keep byte-identical canonical bytes: every 1.3 field
   defaults to absent, asserted rather than intended.
+
+## Container lane
+
+Docker Engine 29.7.2. Run on September 15, 2026, after the in-process record above was written — the
+container-gated tests had been skipped until then, and the run found a defect (below).
+
+- `PURPLELOOP_CONTAINER_TESTS=1 uv run pytest tests/phase2/test_supportlab_isolation.py tests/phase1/test_isolation.py`:
+  **9 passed**, including the two container tests previously reported as skips. The live containers
+  ran non-root with external egress refused and a customer credential rejected by the control plane.
+- `make supportlab-demo`: the 18-scenario Phase 2 corpus on PostgreSQL with the browser scenarios on
+  Chromium, rebuilt from the Phase 3 fixture source. `verify-bundle` returned
+  `{valid: True, complete: True, scenarios: 18}`. Teardown left no supportlab containers, networks,
+  or volumes.
+- **Agent surface on PostgreSQL.** Seeding the agent surface through the real control route produces
+  the same state hash on PostgreSQL 16 and SQLite (`e7cfb55e…`, 51 chunks, 12 scored tables), and
+  reset restores it on both. The full 25-scenario agent corpus passed **25/25** against PostgreSQL,
+  and every scenario's oracle hash was **identical** to its SQLite run (25/25).
+- Scope of that last measurement, stated precisely: the database was a real PostgreSQL 16 container
+  pinned by digest, while the application ran in process over ASGI transports. There is no compose
+  stack for the agent lane, so the agent routes have not run inside the fixture container image; the
+  Phase 2 routes have, via `supportlab-demo`.
 
 ## Corpus
 
@@ -246,6 +268,20 @@ were gaps between what this document claimed and what was actually executed.
 - **The adapter silently dropped invalid intents** and applied the per-turn cap before validating,
   so a model could push an invalid intent out of inspection by padding the list ahead of it.
 - **`AgentToolIntent` did not type its arguments** despite a docstring claiming it did.
+
+### Found on the container lane
+
+- **The agent surface could not be seeded on PostgreSQL.** The control route called `seeding.apply`,
+  which materializes, and then wrote the agent corpus into the template and materialized again.
+  SQLite keeps its template connection open after materializing, so this worked in every in-process
+  run. PostgreSQL commits and closes the template so it can serve as `CREATE DATABASE … TEMPLATE`, so
+  the agent-row write failed with `AttributeError: 'NoneType' object has no attribute 'execute'`,
+  reproduced against a PostgreSQL 16 container. Every agent scenario would have failed at seed time
+  on the container lane. The in-process record could not see this: its 25/25 and 75/75 figures were
+  true, and true only for SQLite. Fixed by seeding every row before a single materialize.
+  `tests/phase3/test_seed_materialize.py` enforces PostgreSQL's rule on the in-process engine — the
+  template is unwritable once materialized — so this class of defect now fails without a container,
+  and a container-gated case asserts the cross-engine hash.
 
 ## Coverage exclusions
 

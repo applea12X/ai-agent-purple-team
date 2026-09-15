@@ -697,10 +697,12 @@ def create_apps(state: SupportlabState) -> tuple[FastAPI, FastAPI]:
             if not db.provisioned:
                 raise HTTPException(409, "fixture not provisioned")
             db.provision()
-            rows = seeding.apply(db, args.seed)
+            # Every row goes into the template before the single materialize. PostgreSQL closes
+            # the template connection when it materializes, so a second write would fail there.
+            rows = seeding.apply(db, args.seed, materialize=False)
             if args.surface == "agent":
                 agent_seed.apply(db, args.seed, rows)
-                db.materialize()
+            db.materialize()
             state.seed_args = args
             state.configuration = {}
             state.flash.clear()

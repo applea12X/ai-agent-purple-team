@@ -165,12 +165,21 @@ COLUMNS = {
 }
 
 
-def apply(database: Database, seed: int) -> SeedRows:
+def apply(database: Database, seed: int, *, materialize: bool = True) -> SeedRows:
+    """Seed the template, and by default materialize the live database from it.
+
+    Pass ``materialize=False`` when more rows follow. Materializing is not idempotent across
+    engines: PostgreSQL commits and closes the template connection so it can be used as a
+    ``CREATE DATABASE ... TEMPLATE``, after which the template cannot be written. SQLite keeps it
+    open, which is why seeding agent rows after an early materialize worked in process and failed
+    on the container lane.
+    """
     rows = build(seed)
     for table, columns in COLUMNS.items():
         database.seed_rows(table, columns, getattr(rows, table))
     database.seed_rows("meta", ("key", "value"), (("tick", "0"), ("seed", str(seed))))
-    database.materialize()
+    if materialize:
+        database.materialize()
     return rows
 
 
