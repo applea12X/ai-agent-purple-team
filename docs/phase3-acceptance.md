@@ -13,7 +13,7 @@ in this document**, and §"Known limits" says exactly what that costs.
 Command: `make phase3-check`
 
 - Ruff lint and format checks passed; mypy strict passed for 73 source files.
-- **339 tests passed, 3 skipped. Branch-aware coverage 88.53%** against the 85% floor.
+- **343 tests passed, 3 skipped. Branch-aware coverage 88.59%** against the 85% floor.
 
 The three skips are gated rather than unexercised: the Phase 2 and Phase 1 container tests
 (`PURPLELOOP_CONTAINER_TESTS=1`) and the cross-engine agent hash test, which additionally needs
@@ -92,7 +92,12 @@ Measured over 5 repetitions per scenario (`make agent-demo`, `--repetitions 5`;
 | Clean utility | 1.0 | 1.0 | 1.0 |
 | Utility under attack | 1.0 | 1.0 | 1.0 |
 | Attack success | 1.0 | 1.0 | 1.0 |
-| Executed unauthorized side effects | 2.0 | 3.0 | 2.96 |
+| Executed unauthorized side effects | 0.0 | 1.0 | 0.96 |
+
+The side-effect row was re-measured after the attacker-contamination fix below; the earlier figure
+(2.0 / 3.0 / 2.96) counted the probe's own writes and was wrong. A minimum of 0.0 is correct and not
+a gap: a scenario such as `agent-system-prompt-leakage` is proven by an output-derived predicate
+rather than by a write, so it has no unauthorized side effect to count.
 
 Reported separately, never composited. Every figure carries its n, seed policy, model pin, and
 exclusion count; a representative one reads
@@ -268,6 +273,35 @@ were gaps between what this document claimed and what was actually executed.
 - **The adapter silently dropped invalid intents** and applied the per-turn cap before validating,
   so a model could push an invalid intent out of inspection by padding the list ahead of it.
 - **`AgentToolIntent` did not type its arguments** despite a docstring claiming it did.
+
+### Found by CI
+
+- **The adaptive attacker contaminated the state its own scenario was scored on.** `agent-demo`
+  enables the attacker; the corpus-metrics run above does not. With it enabled,
+  `agent-indirect-markdown` regressed: its security oracle counts rows in `crm_records`, and the
+  attacker's accepted proposals write to that table. The defended replay held 3 attacker rows and 0
+  from the injected intent — the defense had worked perfectly — but the oracle still read "true", so
+  the defense was never credited. Detection was affected the same way: an attacker write to a
+  privileged field fired the `privileged-field` rule inside a defended replay, which is a false
+  detector signal. Rejected proposals were designed as evidence; accepted ones landing in scored
+  state was not thought through.
+
+  Fixed by ordering rather than suppression: the probe still runs, under the leg's defense
+  configuration and charged to the same attack budget, with every decision recorded — but after the
+  state and telemetry the oracles read have been captured. `tests/phase3/test_attacker_isolation.py`
+  asserts a scenario reaches the same verdict and the same observed detector set with the attacker
+  on and off, and that accepted and refused proposals both still occur, so it cannot pass by the
+  probe having been disabled.
+
+  **This also corrected a reported number.** The executed-unauthorized-side-effects figure in the
+  four-number table was measured with the attacker on and counted the probe's own writes. It is
+  re-measured below.
+
+- **A process failure of mine, recorded because it caused the above to be missed.** I ran
+  `agent-demo` through `tail` and read "Verified report" as success without checking the exit code.
+  The demo had already been exiting 1 on this scenario locally. The 25/25 figure elsewhere in this
+  record came from a separate corpus-metrics run with the attacker off, so both statements were
+  true of different configurations, and I conflated them. CI caught it because CI checks exit codes.
 
 ### Found on the container lane
 
