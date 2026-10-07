@@ -457,9 +457,6 @@ class PurpleTeamRunner:
         await self.stage(Stage.ATTACK if name == "baseline" else Stage.REPLAY)
         attack_start = self.runtime.budgets.used
         responses, action_ids, susceptible = await self.execute_steps("attack")
-        extra, extra_ids = await self.run_proposals(attack_start)
-        responses.extend(extra)
-        action_ids = (*action_ids, *extra_ids)
         after = await self.controller.call("snapshot")
         snapshot_ids = self.controller.last_evidence_ids
         self.snapshots[f"{name}-after"] = after
@@ -494,6 +491,13 @@ class PurpleTeamRunner:
             "DETECTORS_SCORED",
             {"results": [d.model_dump(mode="json") for d in detectors]},
         )
+        # The probe runs last: under this leg's defense configuration and charged to the same
+        # attack budget, but after the state and telemetry the oracles read were captured. An
+        # accepted proposal writes to the very tables a scenario scores, so probing before the
+        # snapshot made a working defense look ineffective and made a defended replay look
+        # detected. Its decisions are still recorded; they are evidence about the kernel, not
+        # observations about the scenario under test.
+        await self.run_proposals(attack_start)
         return LegResult(
             seed_hash=seed_hash,
             utility=utility,

@@ -487,7 +487,10 @@ Checkpoint — measured:
   named and the calibration was not re-tuned. API cost is a measured zero because the lane is
   offline.
 - Deterministic lanes replay exactly as before; the agent lane replayed 75/75.
-- 339 tests pass, 88.53% branch coverage; Phase 0's 133 and Phase 2's 37 pass unchanged.
+- 343 tests pass, 88.59% branch coverage; Phase 0's 133 and Phase 2's 37 pass unchanged.
+- CI on the pull request: all five PYTHONHASHSEED jobs pass, the stochastic lane correctly skips
+  with no endpoint configured, and the offline agent-demo lane passes after the attacker-ordering
+  fix. Its first run failed, which is how the attacker contamination was found.
 - Container lane (run after the in-process record): 9 container-gated tests pass, the 18-scenario
   Phase 2 demo verifies on PostgreSQL and Chromium, and the agent corpus passes 25/25 against
   PostgreSQL with oracle hashes identical to SQLite. That run found and fixed a defect that made
