@@ -12,6 +12,16 @@ class BudgetError(RuntimeError):
     reason_code = "BUDGET_EXCEEDED"
 
 
+class WallTimeExceeded(BudgetError):
+    """The wall-time budget ran out before a reservation could be made.
+
+    Reported under the same reason code as a deadline that fires mid-action, so whether the clock
+    ran out before or during adapter activity does not change how the denial is classified.
+    """
+
+    reason_code = "WALL_TIME_EXCEEDED"
+
+
 @dataclass(frozen=True)
 class Reservation:
     reservation_id: int
@@ -31,7 +41,7 @@ class BudgetLedger:
     async def reserve(self, requested: BudgetRequest) -> Reservation:
         async with self._lock:
             if time.monotonic() - self._started >= self._limits.wall_time_seconds:
-                raise BudgetError("wall-time budget exhausted")
+                raise WallTimeExceeded("wall-time budget exhausted")
             if self._active >= self._limits.concurrency:
                 raise BudgetError("concurrency budget exhausted")
             proposed = {
