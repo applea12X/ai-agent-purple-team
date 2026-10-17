@@ -145,12 +145,18 @@ def _runner_factory(
     attacker: bool,
     provider: Provider | None,
     pin_id: str,
-    endpoint: str | None,
     pin: ModelPin | None,
     fixture_mode: AgentFixtureMode = AgentFixtureMode.IN_PROCESS,
 ) -> tuple[AuthorizationManifest, RunnerFactory, Execute]:
+    # The manifest signs the origin the provider will actually connect to, not the URL it was
+    # given: a base URL carries an API path (Ollama's and most hosted APIs' ``/v1``) that a
+    # signed model asset may not, and signing anything else would let the two disagree.
     manifest = supportlab_agent_manifest(
-        manifest_key, seed=seed, judge=judge, model_endpoint=endpoint, model_pin=pin
+        manifest_key,
+        seed=seed,
+        judge=judge,
+        model_endpoint=provider.endpoint if provider is not None else None,
+        model_pin=pin,
     )
     verifier = ManifestVerifier({KEY_ID: manifest_key.public_key()})
     verifier.verify(manifest)
@@ -228,7 +234,6 @@ async def run_offline_scenario(
         attacker=attacker,
         provider=None,
         pin_id="offline-scripted",
-        endpoint=None,
         pin=None,
     )
     compile_plan(scenario, manifest, lane=AGENT_LANE)
@@ -257,7 +262,6 @@ async def run_offline_corpus(
             attacker=False,
             provider=None,
             pin_id="offline-scripted",
-            endpoint=None,
             pin=None,
         )
         runner, directory = factory(0)
@@ -304,7 +308,6 @@ def register(app: typer.Typer) -> None:
                 attacker=attacker,
                 provider=provider,
                 pin_id="networked" if pin else "offline-scripted",
-                endpoint=endpoint,
                 pin=pin,
                 fixture_mode=fixture,
             )
@@ -448,7 +451,6 @@ def register(app: typer.Typer) -> None:
                     attacker=attacker,
                     provider=None,
                     pin_id="offline-scripted",
-                    endpoint=None,
                     pin=None,
                     fixture_mode=fixture,
                 )
