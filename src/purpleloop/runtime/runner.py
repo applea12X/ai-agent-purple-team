@@ -55,6 +55,18 @@ ORACLE_HASH_EXCLUDE: dict[str, Any] = {
 RUN_STOP_REASONS = frozenset({"BUDGET_EXCEEDED", "KERNEL_STOPPED", "WALL_TIME_EXCEEDED"})
 
 
+class ActionFailed(RuntimeError):
+    """A kernel outcome that ends the run, carrying the kernel's own reason code.
+
+    ``run`` reports ``reason_code`` as the run's reason, so an ended run says *why* the kernel
+    stopped the action rather than naming the exception type that carried it.
+    """
+
+    def __init__(self, reason_code: str) -> None:
+        self.reason_code = reason_code
+        super().__init__(reason_code)
+
+
 def leg_semantics(leg: LegResult | None) -> dict[str, Any] | None:
     """What a leg decided, with per-run identifiers removed."""
     return None if leg is None else leg.model_dump(mode="json", exclude=ORACLE_HASH_EXCLUDE)
@@ -146,7 +158,7 @@ class PurpleTeamRunner:
         """Run a planned action. Anything short of completion fails the run closed."""
         result = await self.submit(action)
         if result.status != "completed" or result.result is None:
-            raise RuntimeError(result.reason_code)
+            raise ActionFailed(result.reason_code)
         return result.result.data, result.event_hashes
 
     async def intent_action(
@@ -169,7 +181,7 @@ class PurpleTeamRunner:
             self.runtime.kill_switch.state != KernelState.RUNNING
             or result.reason_code in RUN_STOP_REASONS
         ):
-            raise RuntimeError(result.reason_code)
+            raise ActionFailed(result.reason_code)
         # A manifest that expired or was revoked mid-leg raises its own ManifestError here.
         self.runtime.verifier.verify(self.manifest, now=self.runtime.clock())
         self.record(

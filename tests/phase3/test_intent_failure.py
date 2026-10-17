@@ -20,7 +20,7 @@ import pytest
 from purpleloop.adapters.base import AdapterResult, Authorize
 from purpleloop.fixture.supportlab.seed import build
 from purpleloop.runtime.demo import ROOT
-from purpleloop.runtime.runner import RUN_STOP_REASONS, PurpleTeamRunner
+from purpleloop.runtime.runner import RUN_STOP_REASONS, ActionFailed, PurpleTeamRunner
 from purpleloop.runtime.runtime import MAX_FAILURE_DETAIL, RuntimeResult, failure_detail
 from purpleloop.runtime.supportlab import InProcessSupportlab
 from purpleloop.schemas.action import ActionRequest
@@ -158,13 +158,17 @@ async def test_a_planned_action_failure_still_fails_the_run_closed(
     )
     summary = await runner.run(scenario(), agent_manifest, run_id="planned", output_dir=directory)
     assert summary.status == "error"
-    # Unchanged behaviour: the run ends on the planned action, not on an evidence event.
-    assert summary.reason == "RuntimeError"
+    # The run ends on the planned action, and says why in the kernel's own reason code.
+    assert summary.reason == "EXECUTION_FAILED"
     assert summary.teardown_complete and fixture.closed
     events = ledger(directory)
     assert not [e for e in events if e["reason_code"] == "TOOL_INTENT_FAILED"]
-    [failure] = [e for e in events if e["reason_code"] == "EXECUTION_FAILED"]
+    [failure] = [
+        e for e in events if e["kind"] == "result" and e["reason_code"] == "EXECUTION_FAILED"
+    ]
     assert failure["data"] == {"detail": "ValueError: injected failure"}
+    [termination] = [e for e in events if e["kind"] == "termination"]
+    assert termination["reason_code"] == "EXECUTION_FAILED"
 
 
 async def test_a_kill_switch_stop_during_an_intent_still_stops_the_run(
@@ -178,7 +182,7 @@ async def test_a_kill_switch_stop_during_an_intent_still_stops_the_run(
     )
     summary = await runner.run(scenario(), agent_manifest, run_id="paused", output_dir=directory)
     assert summary.status == "error"
-    assert summary.reason.startswith("RuntimeError")
+    assert summary.reason.startswith("EXECUTION_FAILED")
     assert not [e for e in ledger(directory) if e["reason_code"] == "TOOL_INTENT_FAILED"]
 
 
@@ -232,8 +236,9 @@ async def test_run_level_denials_of_an_intent_still_propagate(
 
     runner.submit = denied  # type: ignore[method-assign]
     action = ActionRequest.model_construct(operation="crm.update", action_id="intent-1")
-    with pytest.raises(RuntimeError, match=reason):
+    with pytest.raises(ActionFailed, match=reason) as raised:
         await runner.intent_action(action)
+    assert raised.value.reason_code == reason
 
 
 async def test_a_cancelled_intent_still_cancels(
