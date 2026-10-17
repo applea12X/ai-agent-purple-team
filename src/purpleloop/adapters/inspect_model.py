@@ -49,3 +49,38 @@ class OfflineModelAPI(ModelAPI):
 @modelapi(name="purpleloop")
 def offline_model() -> type[OfflineModelAPI]:
     return OfflineModelAPI
+
+
+class PinnedModelLabel(ModelAPI):
+    """The Inspect-side name of a run whose model calls PurpleLoop's own model plane made.
+
+    A networked agent run reaches its model through ``ModelClient`` under a signed pin, never
+    through Inspect, so the eval's model must name that pin rather than claim the offline store.
+    It is a label and nothing else: it holds no endpoint or credential and refuses to generate.
+    """
+
+    def __init__(
+        self,
+        model_name: str,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        config: GenerateConfig | None = None,
+        **model_args: Any,
+    ) -> None:
+        if base_url or api_key:
+            raise ValueError("a pinned model label carries no endpoint or credential")
+        super().__init__(model_name, config=config or GenerateConfig())
+
+    async def generate(
+        self,
+        input: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice,
+        config: GenerateConfig,
+    ) -> ModelOutput:
+        raise RuntimeError("model calls go through the PurpleLoop model plane, not Inspect")
+
+
+@modelapi(name="purpleloop-pin")
+def pinned_model_label() -> type[PinnedModelLabel]:
+    return PinnedModelLabel

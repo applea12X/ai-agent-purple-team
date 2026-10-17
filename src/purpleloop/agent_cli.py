@@ -124,6 +124,7 @@ async def _inspect_execute(
     manifest: object,
     run_id: str,
     directory: Path,
+    pin: ModelPin | None = None,
 ) -> RunSummary:
     """Run one repetition through the Inspect bridge, so the bundle carries an Inspect log."""
     return await evaluate_runner(
@@ -133,6 +134,7 @@ async def _inspect_execute(
         run_id=run_id,
         output_dir=directory,
         model_fixture=MODEL_FIXTURE,
+        model_pin=pin,
     )
 
 
@@ -210,7 +212,7 @@ def _runner_factory(
         fixture = pending.pop()
         if isinstance(fixture, ComposeSupportlab):  # pragma: no cover - container lane
             await fixture.start()
-        return await _inspect_execute(runner, scenario, run_manifest, run_id, directory)
+        return await _inspect_execute(runner, scenario, run_manifest, run_id, directory, pin)
 
     return manifest, factory, execute
 

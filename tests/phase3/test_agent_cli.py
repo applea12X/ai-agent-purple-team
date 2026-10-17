@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -88,6 +89,7 @@ def test_an_endpoint_with_an_api_path_is_signed_by_origin_and_called_at_its_path
     nothing. Neither form reached a model, and no test drove the CLI with a networked endpoint.
     """
     monkeypatch.delenv(CREDENTIAL_ENV, raising=False)
+    monkeypatch.setenv("PURPLELOOP_MODEL_ID", "qwen2.5:7b-instruct")
     requested: list[str] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -126,3 +128,8 @@ def test_an_endpoint_with_an_api_path_is_signed_by_origin_and_called_at_its_path
     evidence = (out / SCENARIO.stem / "evidence.jsonl").read_text()
     assert "MODEL_ENDPOINT_PERMITTED" in evidence
     assert "MODEL_ENDPOINT_NOT_SIGNED" not in evidence
+    # The Inspect log names the pin that answered, never the offline store it did not use.
+    (log,) = (out / SCENARIO.stem / "inspect").glob("*.json")
+    eval_header = json.loads(log.read_text())["eval"]
+    assert eval_header["model"] == "purpleloop-pin/ollama/qwen2.5:7b-instruct"
+    assert eval_header["metadata"]["model_pin"]["model_id"] == "qwen2.5:7b-instruct"
