@@ -13,7 +13,9 @@ A test greps this module for adapter dispatch and HTTP calls to tool paths and f
 The prompt builder is where the ``retrieval-provenance-guard`` defense takes effect: when the
 fixture says to quarantine, untrusted chunks are placed in a delimited block that is labelled as
 data, and the standing instruction says so. When it does not, they are inlined undifferentiated.
-That difference is the whole mitigation, and it is visible in the prompt digest.
+That difference is visible in the prompt digest. It is not the whole mitigation: a real model
+followed a delimited injection anyway, so the fixture also enforces provenance at its outbound
+sink (``fixture/supportlab/agent_api``), and the defense holds whether or not the model cooperates.
 """
 
 from __future__ import annotations
