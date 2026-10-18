@@ -85,7 +85,7 @@ proposals before the scored snapshot, letting an advisory component's writes dec
 security verdicts and side-effect counts. The probes now run after every binding measurement of
 the leg (`runtime/runner.py`), marked by an `ADVISORY_PROBES_AFTER_BINDING` lifecycle event. See
 the ADR 0009 amendment, the correction note in `docs/phase3-acceptance.md`, and
-`tests/phase4/test_attacker_isolation.py`, which fails against the Phase 3 runner.
+`tests/phase4/test_advisory_probe_isolation.py`, which fails against the Phase 3 runner.
 
 ## WP4.0 debt status
 

@@ -209,7 +209,7 @@ a test.
   - **Fix.** Probes now run after every binding measurement of the leg (security, utility under
     attack, detection), marked by an `ADVISORY_PROBES_AFTER_BINDING` lifecycle event. They still
     execute through `SafetyRuntime` and are charged to the leg budget.
-  - **Tests.** `tests/phase4/test_attacker_isolation.py` has three tests, and **all three fail
+  - **Tests.** `tests/phase4/test_advisory_probe_isolation.py` has three tests, and **all three fail
     against the Phase 3 runner**.
   - **Records updated.** A correction note is prepended to `docs/phase3-acceptance.md`, and ADR
     0009 carries an amendment.

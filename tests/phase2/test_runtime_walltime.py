@@ -11,6 +11,7 @@ import asyncio
 from typing import Any
 
 from purpleloop.adapters.base import AdapterResult
+from purpleloop.adapters.mock_read import MockReadAdapter
 from purpleloop.schemas.action import ActionRequest, TargetObservation
 
 
@@ -56,6 +57,21 @@ async def test_walltime_cancellation_reported_as_wall_time_exceeded(
     result = await runtime.run(manifest, action, run_id="wt", trace_id="wt")
     assert result.status == "denied"
     assert result.reason_code == "WALL_TIME_EXCEEDED"
+
+
+async def test_walltime_exhausted_before_reservation_reported_as_wall_time_exceeded(
+    manifest: Any, action: Any, runtime_factory: Any
+) -> None:
+    # If admission outlasts the wall-time budget, the ledger refuses the reservation. That is the
+    # same cause as a mid-action deadline and must carry the same reason code, not the generic
+    # BUDGET_EXCEEDED -- and the adapter must never start.
+    adapter = MockReadAdapter()
+    runtime, _, _ = runtime_factory(manifest=manifest, adapter=adapter)
+    runtime.budgets._started -= 10_000
+    result = await runtime.run(manifest, action, run_id="wt-pre", trace_id="wt-pre")
+    assert result.status == "denied"
+    assert result.reason_code == "WALL_TIME_EXCEEDED"
+    assert adapter.invocations == 0
 
 
 async def test_cancellation_with_budget_remaining_stays_cancelled(

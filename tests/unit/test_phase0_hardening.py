@@ -103,15 +103,20 @@ async def test_wall_time_is_enforced_during_adapter_activity(
     private_key: Ed25519PrivateKey,
     runtime_factory: Any,
 ) -> None:
+    # The budget must outlast admission (manifest verification, policy, evidence writes) on a
+    # loaded CI runner, or the deadline is hit at reservation and this test never reaches the
+    # adapter. One second leaves wide margin and is still far short of the adapter's delay.
     short = manifest.model_copy(
         update={
-            "budgets": manifest.budgets.model_copy(update={"wall_time_seconds": 0.05}),
+            "budgets": manifest.budgets.model_copy(update={"wall_time_seconds": 1.0}),
             "signature": "",
         }
     )
     signed = sign_manifest(short, private_key)
-    runtime, _, _ = runtime_factory(manifest=signed, adapter=MockReadAdapter(delay_seconds=30))
+    adapter = MockReadAdapter(delay_seconds=30)
+    runtime, _, _ = runtime_factory(manifest=signed, adapter=adapter)
     result = await runtime.run(signed, action, run_id="wall-time", trace_id="wall-time-trace")
+    assert adapter.started.is_set()
     assert result.status == "denied"
     assert result.reason_code == "WALL_TIME_EXCEEDED"
 

@@ -55,7 +55,7 @@ the reset before the next leg restores seeded state. No new `Stage` was added, b
 fault-injection suite parametrizes over every `Stage` member and must pass unchanged, so the
 boundary is marked in evidence.
 
-**Verification.** `tests/phase4/test_attacker_isolation.py` asserts that every binding measurement
+**Verification.** `tests/phase4/test_advisory_probe_isolation.py` asserts that every binding measurement
 of both legs is identical with and without the attacker, that accepted probes still execute after
 each leg's boundary, and that the whole corpus passes with zero defended side effects in the
 configuration `agent-demo` runs. All three fail against the Phase 3 runner.
