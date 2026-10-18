@@ -11,6 +11,7 @@ from purpleloop.schemas.action import SideEffectClass
 from purpleloop.schemas.common import StrictModel, require_identifier, require_utc
 from purpleloop.schemas.phase2 import Phase2Grants
 from purpleloop.schemas.phase3 import Phase3Grants
+from purpleloop.schemas.phase4 import Phase4Grants
 
 
 class AssetScope(StrictModel):
@@ -102,10 +103,12 @@ class BudgetLimits(StrictModel):
 
 
 #: Manifest versions that carry Phase 1 grants and the loopback-fixture posture.
-PHASE1_PLUS: frozenset[str] = frozenset({"1.1.0", "1.2.0", "1.3.0"})
+PHASE1_PLUS: frozenset[str] = frozenset({"1.1.0", "1.2.0", "1.3.0", "1.4.0"})
 #: Manifest versions that may carry Phase 2 grants. Phase 3 builds on the supportlab fixture, so
 #: it keeps signed ownership rather than replacing it.
-PHASE2_PLUS: frozenset[str] = frozenset({"1.2.0", "1.3.0"})
+PHASE2_PLUS: frozenset[str] = frozenset({"1.2.0", "1.3.0", "1.4.0"})
+#: Manifest versions that may carry Phase 3 grants; 1.4 keeps the model plane it inherits.
+PHASE3_PLUS: frozenset[str] = frozenset({"1.3.0", "1.4.0"})
 
 
 class Phase1Grants(StrictModel):
@@ -115,10 +118,11 @@ class Phase1Grants(StrictModel):
 
 
 class AuthorizationManifest(StrictModel):
-    schema_version: Literal["1.0.0", "1.1.0", "1.2.0", "1.3.0"] = "1.0.0"
+    schema_version: Literal["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"] = "1.0.0"
     phase1: Phase1Grants | None = None
     phase2: Phase2Grants | None = None
     phase3: Phase3Grants | None = None
+    phase4: Phase4Grants | None = None
     engagement_id: str
     owner: str
     approvers: tuple[str, ...]
@@ -227,10 +231,14 @@ class AuthorizationManifest(StrictModel):
             raise ValueError("Phase 2 grants require manifest 1.2 or later")
         if self.schema_version in PHASE2_PLUS:
             self._validate_phase2()
-        if self.schema_version != "1.3.0" and self.phase3 is not None:
-            raise ValueError("Phase 3 grants require manifest 1.3")
-        if self.schema_version == "1.3.0":
+        if self.schema_version not in PHASE3_PLUS and self.phase3 is not None:
+            raise ValueError("Phase 3 grants require manifest 1.3 or later")
+        if self.schema_version in PHASE3_PLUS:
             self._validate_phase3()
+        if self.schema_version != "1.4.0" and self.phase4 is not None:
+            raise ValueError("Phase 4 grants require manifest 1.4")
+        if self.schema_version == "1.4.0" and self.phase4 is None:
+            raise ValueError("Phase 4 requires explicit phase4 grants")
         if set(self.credential_scopes) != set(self.credential_handles):
             raise ValueError("every credential handle requires one exact scope")
         if any(not operations for operations in self.credential_scopes.values()):

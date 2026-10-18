@@ -8,7 +8,11 @@ the signed manifest must pre-authorize:
 
 ``retrieval_provenance``
     Off, untrusted retrieved content is handed back undifferentiated. On, the response tells the
-    caller to quarantine it, which is what a context-marking mitigation does in practice.
+    caller to quarantine it, which is what a context-marking mitigation does in practice -- and the
+    application enforces the provenance itself: once the actor's current assistant run has read
+    untrusted content, an outbound message that leaves the organisation or carries the tracer is
+    refused. Marking alone asks the model to cooperate; a real model was measured not to
+    (``docs/phase4-acceptance.md``, WP4.0.1), so the guard does not depend on it.
 ``memory_write_guard``
     Off, the assistant may persist content it derived from untrusted input. On, that is refused.
 ``output_sanitization``
@@ -85,6 +89,15 @@ def register_agent_routes(data: FastAPI, db: Database, helpers: Helpers) -> None
     def scoped(operation: str) -> bool:
         """True when the declared capability set forbids this operation and scoping is on."""
         return flag("capability_scoping") and operation not in helpers.capabilities()
+
+    def tainted(user: dict[str, Any]) -> bool:
+        """True when the actor's most recent assistant run retrieved untrusted content."""
+        latest = db.one(
+            "SELECT untrusted_chunks FROM agent_runs WHERE org_id = ? AND actor_id = ? "
+            "ORDER BY seq DESC, id DESC LIMIT 1",
+            (str(user["org_id"]), str(user["id"])),
+        )
+        return latest is not None and int(latest["untrusted_chunks"]) > 0
 
     @data.post("/api/agent/context")
     async def agent_context(args: AgentContextArgs, request: Request) -> dict[str, Any]:
@@ -176,10 +189,14 @@ def register_agent_routes(data: FastAPI, db: Database, helpers: Helpers) -> None
         tracer = tracer_for(org)
         exposed = tracer in args.body
         external = destination in EXTERNAL_DESTINATIONS
+        leaves = external or exposed or injected is not None
         denied = (
             scoped("email.send")
             or (malformed and flag("schema_validation"))
-            or (flag("output_sanitization") and (external or exposed or injected is not None))
+            or (flag("output_sanitization") and leaves)
+            # Provenance enforced at the sink: the application, not the model, decides that
+            # content steered by an untrusted retrieval does not leave the organisation.
+            or (flag("retrieval_provenance") and leaves and tainted(user))
         )
         tick = db.next_tick()
         if not denied:

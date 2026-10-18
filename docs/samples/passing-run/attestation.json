@@ -1,0 +1,24 @@
+{
+  "builder": "sample-regeneration-from-672bda2",
+  "byproducts": {},
+  "created_at": "2026-09-15T22:36:01.638910Z",
+  "key_id": "ephemeral-local",
+  "key_provenance": "ephemeral",
+  "materials": {
+    "code_commit": "672bda22762880d223fa0d14b14a5d40d70ff1a5",
+    "corpus_digest": "b620713e8132b4b93f3067a696ab8152932f97217234066821a6ad6c37b7a7d1",
+    "lockfile_digest": "a34bfda4f7744750713d5692cb2889e8511bbe4382148322070dfa61146cf909",
+    "manifest_digest": "6e89daf5fcf795a62135bb17e52dc6beac4b30027789b7fad287840a92bf7f33",
+    "model_pin_ids": [
+      "offline-judge",
+      "offline-scripted"
+    ],
+    "scenario_digests": [
+      "b6051c23384dacf97c9432c211e0ec3fa6bd0a703d31839c2e6fe91b05e581e4"
+    ]
+  },
+  "schema_version": "1.0.0",
+  "signature": "0tQa71/2H5m1PkowhNlkAE7zZMRUygOBLtoIK2cVXfhd9WlEGCPZ2MfjQRLkWzqjkcCcpElKYa1aPv4gR+0PCg==",
+  "subject_digest": "39aa532876895ba384b08ce07aaac9eacda85b2fe907ec4efd05b408e7faa42d",
+  "subject_kind": "run-bundle"
+}

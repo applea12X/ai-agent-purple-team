@@ -1,0 +1,2 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuite name="PurpleLoop Phase 1" tests="1" failures="0" errors="0" skipped="0"><testcase name="agent-indirect-ticket" classname="purpleloop.phase1" /></testsuite>

@@ -7,13 +7,14 @@ from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
 from purpleloop.control.attacker import BoundedAttacker
+from purpleloop.control.kill_switch import KernelState
 from purpleloop.control.lanes import PHASE1_LANE, LaneContract
 from purpleloop.control.phase1_tools import ChatArgs, ToolIntent
 from purpleloop.control.phase3_tools import INTENT_ADAPTERS, AgentToolIntent
 from purpleloop.control.plan_compiler import compile_plan, compile_step
 from purpleloop.runtime.fixture import FixtureController
 from purpleloop.runtime.replay import replay_fingerprint
-from purpleloop.runtime.runtime import SafetyRuntime
+from purpleloop.runtime.runtime import RuntimeResult, SafetyRuntime
 from purpleloop.schemas.action import ActionRequest, BudgetRequest
 from purpleloop.schemas.authorization import AuthorizationManifest
 from purpleloop.schemas.common import digest_data
@@ -45,6 +46,25 @@ ORACLE_HASH_EXCLUDE: dict[str, Any] = {
     "detectors": {"__all__": {"evidence_ids"}},
     "judge": {"cited_evidence_ids", "input_digest"},
 }
+
+
+#: Kernel outcomes that are about the run rather than the action. A model-originated intent that
+#: meets one of these stops the run exactly as a planned action would: the budget is spent or the
+#: kernel was stopped, and recording it as one more piece of evidence would keep a leg going that
+#: the kernel has already ended.
+RUN_STOP_REASONS = frozenset({"BUDGET_EXCEEDED", "KERNEL_STOPPED", "WALL_TIME_EXCEEDED"})
+
+
+class ActionFailed(RuntimeError):
+    """A kernel outcome that ends the run, carrying the kernel's own reason code.
+
+    ``run`` reports ``reason_code`` as the run's reason, so an ended run says *why* the kernel
+    stopped the action rather than naming the exception type that carried it.
+    """
+
+    def __init__(self, reason_code: str) -> None:
+        self.reason_code = reason_code
+        super().__init__(reason_code)
 
 
 def leg_semantics(leg: LegResult | None) -> dict[str, Any] | None:
@@ -123,7 +143,7 @@ class PurpleTeamRunner:
             await self.stage_hook(stage)
         await self.runtime.kill_switch.ensure_running()
 
-    async def action(self, action: ActionRequest) -> tuple[dict[str, Any], tuple[str, ...]]:
+    async def submit(self, action: ActionRequest) -> RuntimeResult:
         result = await self.runtime.run(
             self.manifest,
             action,
@@ -132,9 +152,51 @@ class PurpleTeamRunner:
         )
         if result.status == "cancelled":
             raise asyncio.CancelledError
+        return result
+
+    async def action(self, action: ActionRequest) -> tuple[dict[str, Any], tuple[str, ...]]:
+        """Run a planned action. Anything short of completion fails the run closed."""
+        result = await self.submit(action)
         if result.status != "completed" or result.result is None:
-            raise RuntimeError(result.reason_code)
+            raise ActionFailed(result.reason_code)
         return result.result.data, result.event_hashes
+
+    async def intent_action(
+        self, action: ActionRequest
+    ) -> tuple[dict[str, Any], tuple[str, ...]] | None:
+        """Run an action the model asked for, or record why it did not happen.
+
+        The kernel permitting an intent does not oblige the target to honour it: the fixture may
+        refuse it (a crm.update naming a ticket as its subject is a 403), and the kernel itself may
+        deny it at execution time. Either is a fact about what the model attempted, so it is
+        recorded as evidence and the leg goes on -- exactly as a compile-time refusal does. A
+        stopped kernel, an exhausted budget, or a manifest that no longer verifies is a fact about
+        the run instead, and fails it closed as before. The refused write never reaches the oracle:
+        no response is returned for it and the target audited nothing.
+        """
+        result = await self.submit(action)
+        if result.status == "completed" and result.result is not None:
+            return result.result.data, result.event_hashes
+        if (
+            self.runtime.kill_switch.state != KernelState.RUNNING
+            or result.reason_code in RUN_STOP_REASONS
+        ):
+            raise ActionFailed(result.reason_code)
+        # A manifest that expired or was revoked mid-leg raises its own ManifestError here.
+        self.runtime.verifier.verify(self.manifest, now=self.runtime.clock())
+        self.record(
+            EventKind.LIFECYCLE,
+            "TOOL_INTENT_FAILED",
+            {
+                "operation": action.operation,
+                "node_id": action.action_id,
+                "status": result.status,
+                "runtime_reason": result.reason_code,
+                "detail": result.detail,
+                "events": list(result.event_hashes),
+            },
+        )
+        return None
 
     async def execute_steps(
         self, phase: str, *, variant: str = ""
@@ -250,7 +312,10 @@ class PurpleTeamRunner:
                         {"action": compiled.model_dump(mode="json")},
                     )
                     self.check_leg_budget(start_budget, compiled.budget, phase)
-                    tool_response, tool_ids = await self.action(compiled)
+                    executed = await self.intent_action(compiled)
+                    if executed is None:
+                        continue
+                    tool_response, tool_ids = executed
                     responses.append(tool_response)
                     evidence.extend(tool_ids)
         return responses, tuple(evidence), susceptible
@@ -491,13 +556,22 @@ class PurpleTeamRunner:
             "DETECTORS_SCORED",
             {"results": [d.model_dump(mode="json") for d in detectors]},
         )
-        # The probe runs last: under this leg's defense configuration and charged to the same
-        # attack budget, but after the state and telemetry the oracles read were captured. An
-        # accepted proposal writes to the very tables a scenario scores, so probing before the
-        # snapshot made a working defense look ineffective and made a defended replay look
-        # detected. Its decisions are still recorded; they are evidence about the kernel, not
-        # observations about the scenario under test.
-        await self.run_proposals(attack_start)
+        if self.attacker is not None:
+            # Adaptive-attacker outcomes are advisory (ADR 0009), so the probes run only after
+            # every binding measurement of the leg is taken. Run earlier, their writes landed in
+            # the scored snapshot, their responses in the oracle input, and their telemetry in
+            # the side-effect count -- an advisory component deciding a binding verdict. They
+            # still execute through SafetyRuntime and are charged to the leg; the reset before
+            # the next leg restores seeded state. No new Stage exists for them because the
+            # Phase 1 fault-injection suite parametrizes over every Stage member, so the boundary
+            # is a lifecycle event rather than a stage. It is not a PROPOSAL event: those require
+            # an operation and a decision, and a null placeholder would fake completeness.
+            self.record(
+                EventKind.LIFECYCLE,
+                "ADVISORY_PROBES_AFTER_BINDING",
+                {"note": "actions after this event are advisory probes excluded from scoring"},
+            )
+            await self.run_proposals(attack_start)
         return LegResult(
             seed_hash=seed_hash,
             utility=utility,

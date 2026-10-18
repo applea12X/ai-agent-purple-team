@@ -1,0 +1,21 @@
+{
+  "artifacts": {
+    "authorization-public.pem": "a5f4205c9a6767e31dd390f4aa7dc2fefef7c636e1522d0e78861e6f21690313",
+    "evidence.jsonl": "d5d1bf0440006630d266dfbf54b04778f379e7a90a504840be72ac4525b2436a",
+    "evidence.jsonl.anchor": "4b576f0124682cbd6e1d33ee79842e3f69572123fc87f407ad2021d56f9eda53",
+    "inspect/2026-09-15T22-35-59-00-00_purpleloop-phase1_HSYYzW3dRXEmimR3TQzLjv.json": "29c99cc12cdc41fe53e6340cf3c4666d2b8f5267c5885057f5c6c31cdd45f8c3",
+    "manifest.json": "3fb684db623ae5a78356f72be8310561e8a983c4ea520c09f4f20b6b8d556dfa",
+    "plan.json": "4c4bc281d0c5740232974224c62432bb066f8daae4242bfbb48628a694ce2aa3",
+    "report.html": "039138b910df29c523d58617458bff4c22b8e3d6c3c556b50b90b0bdf455fc00",
+    "report.sarif": "741882cab7c92aebc15f2ae0c87b2574d8ded4f2da61ef6fe73979aeabb48cd4",
+    "report.xml": "d523d634a7f312ac915381acd95851a04d732f51b67c0c04261c59c795d0a1c1",
+    "scenario.json": "5a39432428f6d018b046e91cc7ffd3dafc3f452825334da4731e21e24b929e3d",
+    "snapshots/baseline-after.json": "56fec13dbdf316964196e7897d5809db7e1fde4c0eab79d012101478b073c8df",
+    "snapshots/baseline-before.json": "61548242ba0c43a5c324acb4f125ff72895046c7636816bfcf1b6e3b0535eaff",
+    "snapshots/replay-after.json": "f00f2361cf59dd1ee931bc9e7e2bf6266ddad083f677dbc691917b9d730ed45a",
+    "snapshots/replay-before.json": "f00f2361cf59dd1ee931bc9e7e2bf6266ddad083f677dbc691917b9d730ed45a",
+    "summary.json": "8098e1740909b6ff7a24fcbb9b932aeccac08a498232e90aca2b2bcf61ce3a09"
+  },
+  "complete": true,
+  "schema_version": "1.1.0"
+}

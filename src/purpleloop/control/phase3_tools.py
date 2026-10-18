@@ -11,7 +11,8 @@ and executed by ``SafetyRuntime`` one at a time, exactly as a Phase 1 chat inten
 
 from __future__ import annotations
 
-from typing import Literal
+import json
+from typing import Any, Literal
 
 from pydantic import Field, JsonValue, ValidationError, model_validator
 
@@ -122,6 +123,51 @@ INTENT_ARGUMENT_MODELS: dict[str, type[StrictModel]] = {
     "export.create": ExportArgs,
 }
 RESOURCE_INTENTS: frozenset[str] = frozenset({"crm.update", "refund.create"})
+
+
+def _describe_type(schema: dict[str, Any]) -> str:
+    """One JSON-schema property as a compact type, or a refusal for a shape it cannot state."""
+    if "anyOf" in schema:
+        return "|".join(_describe_type(option) for option in schema["anyOf"])
+    if "const" in schema:
+        return json.dumps(schema["const"])
+    if "enum" in schema:
+        return "|".join(json.dumps(choice) for choice in schema["enum"])
+    kind = schema.get("type")
+    if kind == "null":
+        return "null"
+    if kind == "string":
+        limits = [f"max {schema['maxLength']} chars"] if "maxLength" in schema else []
+        if "pattern" in schema:
+            limits.append(f"matching {schema['pattern']}")
+        return f"string ({', '.join(limits)})" if limits else "string"
+    if kind == "integer":
+        return f"integer {schema['minimum']}..{schema['maximum']}"
+    # Fail at import rather than describe a field vaguely: a schema the model is told wrongly is
+    # the drift this function exists to prevent.
+    raise TypeError(f"cannot describe argument schema {schema!r}")
+
+
+def describe_intent_arguments() -> str:
+    """The argument contract of every intent operation, rendered from the typed models.
+
+    This is what the model is told, and it is generated from ``INTENT_ARGUMENT_MODELS`` and
+    ``RESOURCE_INTENTS`` -- the same objects ``AgentToolIntent`` validates against -- so the
+    description cannot drift from what is accepted. It describes the schema; it does not widen it.
+    """
+    lines = []
+    for operation in sorted(INTENT_OPERATIONS):
+        schema = INTENT_ARGUMENT_MODELS[operation].model_json_schema()
+        required = set(schema.get("required", ()))
+        fields = []
+        for name, prop in schema["properties"].items():
+            text = f"{json.dumps(name)}: {_describe_type(prop)}"
+            if name not in required:
+                text += f" (optional, default {json.dumps(prop.get('default'))})"
+            fields.append(text)
+        resource = "a string (required)" if operation in RESOURCE_INTENTS else "null"
+        lines.append(f"- {operation}: resource_id {resource}; arguments {{{', '.join(fields)}}}")
+    return "\n".join(lines)
 
 
 class RetrievedChunk(StrictModel):
@@ -278,4 +324,5 @@ __all__ = [
     "MemoryWriteArgs",
     "OperationResult",
     "RetrievedChunk",
+    "describe_intent_arguments",
 ]

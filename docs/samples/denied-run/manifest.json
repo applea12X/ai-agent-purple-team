@@ -1,0 +1,129 @@
+{
+  "allowed_adapters": [
+    "http",
+    "chat",
+    "control",
+    "tool"
+  ],
+  "allowed_methods": [
+    "GET",
+    "POST",
+    "PATCH"
+  ],
+  "allowed_operations": [
+    "fixture.telemetry",
+    "refund.create",
+    "record.read",
+    "fixture.reset",
+    "canary.export",
+    "fixture.provision",
+    "fixture.snapshot",
+    "fixture.defense",
+    "fixture.teardown",
+    "chat.complete",
+    "fixture.seed",
+    "record.update"
+  ],
+  "allowed_side_effects": [
+    "write",
+    "read"
+  ],
+  "approvers": [
+    "local-demo-operator"
+  ],
+  "assets": [
+    {
+      "allowed_resolved_addresses": [
+        "127.0.0.1"
+      ],
+      "asset_id": "fixture-data",
+      "host": "127.0.0.1",
+      "path_prefix": "/",
+      "port": 18080,
+      "resource_ids": [],
+      "scheme": "http",
+      "tenant_ids": [
+        "tenant-a",
+        "tenant-b"
+      ]
+    },
+    {
+      "allowed_resolved_addresses": [
+        "127.0.0.1"
+      ],
+      "asset_id": "fixture-control",
+      "host": "127.0.0.1",
+      "path_prefix": "/control",
+      "port": 18081,
+      "resource_ids": [],
+      "scheme": "http",
+      "tenant_ids": [
+        "harness"
+      ]
+    }
+  ],
+  "budgets": {
+    "concurrency": 1,
+    "cost_microusd": 0,
+    "records": 100,
+    "requests": 100,
+    "retries": 0,
+    "tokens": 16384,
+    "wall_time_seconds": 60.0,
+    "writes": 32
+  },
+  "cleanup_procedure": "fixture-reset",
+  "credential_handles": [
+    "fixture-customer",
+    "fixture-control"
+  ],
+  "credential_scopes": {
+    "fixture-control": [
+      "fixture.telemetry",
+      "fixture.reset",
+      "fixture.provision",
+      "fixture.snapshot",
+      "fixture.defense",
+      "fixture.teardown",
+      "fixture.seed"
+    ],
+    "fixture-customer": [
+      "refund.create",
+      "record.read",
+      "canary.export",
+      "chat.complete",
+      "record.update"
+    ]
+  },
+  "data_classification": "synthetic",
+  "denied_operations": [],
+  "egress_hosts": [
+    "127.0.0.1"
+  ],
+  "engagement_id": "phase1-local-demo",
+  "exact_exclusions": [],
+  "issued_at": "2026-09-12T06:51:04.118107Z",
+  "key_id": "demo-key",
+  "model_endpoints": [],
+  "owner": "fixture-owner",
+  "phase1": {
+    "defense_profiles": [
+      "verified-approval",
+      "capability-guard",
+      "tenant-ownership",
+      "property-allowlist"
+    ],
+    "max_depth": 16,
+    "max_nodes": 64
+  },
+  "redaction_required": true,
+  "required_evidence": [],
+  "retention_days": 7,
+  "schema_version": "1.1.0",
+  "signature": "zaqcz1rSfat+egJBus72tEkmoyTN2Hx68GjpF5VBpGbUckh1OlsAXcZGMBoAreunun5ICB2qlUKw8iZih3ybCg==",
+  "stop_conditions": [],
+  "stop_on_error": true,
+  "synthetic_secrets": [],
+  "valid_from": "2026-09-13T06:51:04.118111Z",
+  "valid_until": "2026-09-14T06:51:04.118112Z"
+}

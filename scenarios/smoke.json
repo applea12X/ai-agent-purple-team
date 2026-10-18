@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.4.0",
+  "wall_time_target_seconds": 600,
+  "scenarios": [
+    {"lane": "phase1", "scenario_id": "bola"},
+    {"lane": "phase1", "scenario_id": "direct-injection"},
+    {"lane": "supportlab", "scenario_id": "bola-ticket"},
+    {"lane": "supportlab", "scenario_id": "bola-ticket-ui"},
+    {"lane": "supportlab", "scenario_id": "bfla-admin-users"},
+    {"lane": "supportlab", "scenario_id": "mass-assignment-credit"},
+    {"lane": "supportlab", "scenario_id": "refund-approval"},
+    {"lane": "supportlab", "scenario_id": "ssrf-link-preview"},
+    {"lane": "agent", "scenario_id": "agent-direct-injection"},
+    {"lane": "agent", "scenario_id": "agent-indirect-ticket"},
+    {"lane": "agent", "scenario_id": "agent-rag-poisoning"},
+    {"lane": "agent", "scenario_id": "agent-canary-exfiltration"},
+    {"lane": "agent", "scenario_id": "agent-excessive-agency"},
+    {"lane": "agent", "scenario_id": "agent-approval-spoofing"}
+  ]
+}

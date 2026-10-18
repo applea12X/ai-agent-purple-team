@@ -82,9 +82,19 @@ def register(app: typer.Typer) -> None:
         typer.echo(f"VALID {scenario.digest()}")
 
     @app.command("verify-bundle")
-    def verify(directory: Path) -> None:
+    def verify(directory: Path, attestation: bool = False) -> None:
+        """Verify a bundle; ``--attestation`` also verifies the signed run attestation."""
         try:
             result = verify_bundle(directory)
+            if attestation:
+                from purpleloop.reporting.attestation import verify_attestation
+
+                attested = verify_attestation(directory)
+                result["attestation"] = {
+                    "subject_digest": attested.subject_digest,
+                    "key_id": attested.key_id,
+                    "key_provenance": attested.key_provenance,
+                }
         except (OSError, ValueError) as exc:
             typer.echo(f"INVALID: {exc}", err=True)
             raise typer.Exit(1) from None

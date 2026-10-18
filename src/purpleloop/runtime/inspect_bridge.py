@@ -13,6 +13,9 @@ from purpleloop.reporting.bundle import inventory, verify_bundle
 from purpleloop.runtime.runner import PurpleTeamRunner
 from purpleloop.schemas.authorization import AuthorizationManifest
 from purpleloop.schemas.phase1 import Phase1Scenario, RunSummary
+from purpleloop.schemas.phase3 import ModelPin
+
+OFFLINE_MODEL = "purpleloop/offline"
 
 
 @scorer(metrics=[accuracy()])
@@ -45,6 +48,13 @@ def dataset(scenarios: list[Phase1Scenario]) -> MemoryDataset:
     )
 
 
+def model_label(pin: ModelPin | None) -> str:
+    """The Inspect model name for a run: the offline store, or the pin that actually answered."""
+    if pin is None or pin.provider == "offline":
+        return OFFLINE_MODEL
+    return f"purpleloop-pin/{pin.provider}/{pin.model_id}"
+
+
 async def evaluate_runner(
     runner: PurpleTeamRunner,
     scenario: Phase1Scenario,
@@ -53,8 +63,10 @@ async def evaluate_runner(
     run_id: str,
     output_dir: Path,
     model_fixture: Path,
+    model_pin: ModelPin | None = None,
 ) -> RunSummary:
     result: list[RunSummary] = []
+    label = model_label(model_pin)
 
     @solver
     def run_canonical() -> Solver:
@@ -62,7 +74,7 @@ async def evaluate_runner(
             summary = await runner.run(scenario, manifest, run_id=run_id, output_dir=output_dir)
             result.append(summary)
             state.metadata["purpleloop"] = summary.model_dump(mode="json")
-            state.output = ModelOutput.from_content("purpleloop/offline", summary.status)
+            state.output = ModelOutput.from_content(label, summary.status)
             state.completed = True
             return state
 
@@ -73,11 +85,12 @@ async def evaluate_runner(
         dataset=dataset([scenario]),
         solver=run_canonical(),
         scorer=canonical_scorer(),
+        metadata={"model_pin": model_pin.model_dump(mode="json")} if model_pin else None,
     )
     logs = await eval_async(
         task,
-        model="purpleloop/offline",
-        model_args={"fixture_path": str(model_fixture)},
+        model=label,
+        model_args={"fixture_path": str(model_fixture)} if label == OFFLINE_MODEL else {},
         log_dir=str(output_dir / "inspect"),
         log_format="json",
         max_samples=1,

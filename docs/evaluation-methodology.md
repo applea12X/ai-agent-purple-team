@@ -104,3 +104,51 @@ injected logical ticks, and real token counts beside it do not make it a wall-cl
 **Determinism.** The agent lane replays bit-exactly because its provider makes no network call. That
 measures the lane and the fixture, not a model. A stochastic lane against a real endpoint would
 report its own measured variance, separately, and does not claim determinism.
+
+## Phase 4 note
+
+**The enforcing gates (ADR 0013).** Five gate classes block CI: scope bypass, critical
+regression, schema drift, budget failure, and per-risk-class regression. Each is a pure,
+unit-tested decision function in `reporting/gates.py`; CI runs `purpleloop gates`, which calls
+exactly the functions the tests call. Every gate reads binding verdicts only —
+`require_binding` rejects advisory input at the type boundary — and a gate handed nothing to
+examine blocks rather than passing vacuously. Each class is additionally proven to block by a
+deliberately failing branch (the red-branch protocol), with the run URLs recorded in the
+acceptance record.
+
+**The pre-registered per-risk-class regression test.** The gate compares deterministic
+per-class corpus metrics (`risk_class_metrics`) against the committed baseline in
+`baselines/corpus-baseline.json`, updated only by an explicit `corpus-baseline` bump commit.
+The rules, fixed before any baseline existed:
+
+1. A baseline class absent from the current run blocks (`RISK_CLASS_MISSING`).
+2. Any newly missed seeded true positive blocks regardless of p-value
+   (`NEWLY_MISSED_SEEDED_FINDING`) — with deterministic verdicts, a lost detection is a fact,
+   not a sample.
+3. A new false positive or any defended-replay unauthorized side effect blocks; both are
+   deterministic facts.
+4. Otherwise, a two-sided Fisher's exact test on the recall table (chosen because per-class
+   counts are 5–25 scenarios) blocks only a difference that is both significant at the
+   pre-registered alpha = 0.05 and in the losing direction.
+5. Added scenarios and new classes change denominators without blocking; the baseline-bump
+   commit records the growth.
+
+**The stochastic lane's own numbers.** The nightly lane classifies every run into a closed
+outcome vocabulary — `pass`, `fail`, `budget-stop`, `skip-no-credential`, `endpoint-error` —
+so an endpoint problem is never triaged as a scenario failure, the same separation WP2.0 drew
+for image builds. Its replay figure is a `ReproductionRecord`: the fraction of repetitions
+reaching the same deterministic security verdict as the first, every repetition counted,
+mismatches listed by index, and a stated gap reason required whenever the rate is below 1. It
+is reported beside — never inside — the deterministic lanes' replay number.
+
+**Attestation and audit.** A complete bundle can carry a signed `RunAttestation` (ADR 0012)
+binding it to the code commit, lockfile, corpus, manifests, and model pins that produced it,
+verified offline by `verify-bundle --attestation`. `audit-export` produces one self-contained,
+redacted JSON per bundle carrying every admission/policy/budget decision with its reason code,
+the embedded manifests and keys, and instructions for verifying each digest.
+
+**What Phase 4's offline numbers are not.** Everything above is measured with the offline
+scripted provider unless the acceptance record says otherwise. The nightly lane exists to make
+the model-facing numbers real; until it has run against a real pinned endpoint, no Phase 3 or
+Phase 4 figure is evidence about any real model's behaviour or cost, and the acceptance record
+says which runs have actually happened.

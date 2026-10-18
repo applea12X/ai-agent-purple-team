@@ -33,11 +33,24 @@ class BoundaryDenied(RuntimeError):
         super().__init__(reason_code)
 
 
+#: Upper bound on a failure detail. An exception message can quote a whole response body; the
+#: ledger records why an action failed, not what the target said at length.
+MAX_FAILURE_DETAIL = 200
+
+
+def failure_detail(exc: BaseException) -> str:
+    """One bounded line naming an execution failure. Callers redact it before it is recorded."""
+    return " ".join(f"{type(exc).__name__}: {exc}".split())[:MAX_FAILURE_DETAIL]
+
+
 class RuntimeResult(StrictModel):
     status: str
     reason_code: str
     result: AdapterResult | None = None
     event_hashes: tuple[str, ...] = ()
+    #: Bounded, redacted account of a ``failed`` result. Diagnostic only: it is outside the score
+    #: hash, so the wording of an exception can never move a verdict.
+    detail: str | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -149,6 +162,7 @@ class SafetyRuntime:
             )
 
         next_hop = 0
+        detail: str | None = None
 
         async def authorize_subresource(observation: TargetObservation) -> None:
             """Route-level origin authorization for a browser subresource.
@@ -379,6 +393,8 @@ class SafetyRuntime:
                 else "failed"
             )
             kind = EventKind.RESULT
+            if status == "failed":
+                detail = effective_redactor.redact(failure_detail(exc))
         finally:
             if reservation is not None:
                 await self.budgets.finalize(reservation)
@@ -392,6 +408,7 @@ class SafetyRuntime:
             action_digest,
             "deny",
             reason_code,
+            {"detail": detail} if detail is not None else None,
             redactor=effective_redactor,
         )
         event_hashes.append(event.event_hash or "")
@@ -399,6 +416,7 @@ class SafetyRuntime:
             status=status,
             reason_code=reason_code,
             event_hashes=tuple(event_hashes),
+            detail=detail,
         )
 
     def _denied_with_event(

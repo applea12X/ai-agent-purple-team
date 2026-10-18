@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
+import httpx
 import pytest
 from typer.testing import CliRunner
 
+from purpleloop import agent_cli
+from purpleloop.adapters.model_provider import OpenAICompatibleProvider
 from purpleloop.agent_cli import CREDENTIAL_ENV, ModelUnavailableForLane, networked_provider
 from purpleloop.cli import app
 from purpleloop.runtime.demo import ROOT
@@ -72,3 +77,59 @@ def test_a_local_profile_needs_no_credential(monkeypatch: pytest.MonkeyPatch) ->
     provider, pin = networked_provider("http://127.0.0.1:11434/v1", "ollama")
     assert pin.provider == "ollama"
     assert provider.endpoint == "http://127.0.0.1:11434"
+
+
+def test_an_endpoint_with_an_api_path_is_signed_by_origin_and_called_at_its_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--endpoint`` is a base URL with an API path; the manifest signs only its origin.
+
+    Passing the base URL straight into the manifest was refused (a signed model asset carries no
+    path), and dropping the path to satisfy the manifest sent requests where Ollama serves
+    nothing. Neither form reached a model, and no test drove the CLI with a networked endpoint.
+    """
+    monkeypatch.delenv(CREDENTIAL_ENV, raising=False)
+    monkeypatch.setenv("PURPLELOOP_MODEL_ID", "qwen2.5:7b-instruct")
+    requested: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "Summary: nothing to do."}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            },
+        )
+
+    class StubbedProvider(OpenAICompatibleProvider):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs, transport=httpx.MockTransport(respond))
+
+    monkeypatch.setattr(agent_cli, "OpenAICompatibleProvider", StubbedProvider)
+    out = tmp_path / "ollama"
+    result = runner.invoke(
+        app,
+        [
+            "agent-run",
+            str(SCENARIO),
+            str(out),
+            "--endpoint",
+            "http://127.0.0.1:11434/v1",
+            "--profile",
+            "ollama",
+        ],
+    )
+    assert "FAILED" not in result.output, result.output
+    assert "n=1" in result.output
+    assert requested and all(
+        url == "http://127.0.0.1:11434/v1/chat/completions" for url in requested
+    )
+    evidence = (out / SCENARIO.stem / "evidence.jsonl").read_text()
+    assert "MODEL_ENDPOINT_PERMITTED" in evidence
+    assert "MODEL_ENDPOINT_NOT_SIGNED" not in evidence
+    # The Inspect log names the pin that answered, never the offline store it did not use.
+    (log,) = (out / SCENARIO.stem / "inspect").glob("*.json")
+    eval_header = json.loads(log.read_text())["eval"]
+    assert eval_header["model"] == "purpleloop-pin/ollama/qwen2.5:7b-instruct"
+    assert eval_header["metadata"]["model_pin"]["model_id"] == "qwen2.5:7b-instruct"
