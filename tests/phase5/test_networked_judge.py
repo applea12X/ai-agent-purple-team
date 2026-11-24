@@ -412,3 +412,23 @@ def test_the_scripted_report_is_unchanged(tmp_path: Path) -> None:
         "negative_control_without_delimiting",
         "agreement",
     }
+
+
+def test_an_empty_judge_endpoint_is_refused(tmp_path: Path, stub_judge: Any) -> None:
+    """What `make judge-report-networked` passes when PURPLELOOP_JUDGE_ENDPOINT is unset."""
+    result = runner.invoke(
+        app, ["judge-report", "--judge-endpoint", "", "--output-dir", str(tmp_path / "e")]
+    )
+    assert result.exit_code == 1 and "MODEL_CONFIG_INVALID" in result.output
+    assert not stub_judge.requests
+
+
+def test_a_judge_endpoint_left_in_the_environment_does_not_network_the_scripted_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stub_judge: Any
+) -> None:
+    """`make judge-report` and CI score the stand-in; a stray variable must not change that."""
+    monkeypatch.setenv("PURPLELOOP_JUDGE_ENDPOINT", "http://127.0.0.1:11434/v1")
+    result = runner.invoke(app, ["judge-report", "--output-dir", str(tmp_path / "s")])
+    assert result.exit_code == 0, result.output
+    assert not stub_judge.requests
+    assert "scripted judge stand-in" in (tmp_path / "s" / "evaluator-redteam.json").read_text()

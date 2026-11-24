@@ -32,7 +32,13 @@ from purpleloop.adapters.networked_judge import (
 )
 from purpleloop.control.budgets import BudgetLedger
 from purpleloop.control.manifest import ManifestVerifier
-from purpleloop.control.model_config import JUDGE_ENV, ModelSettings, build_pin, with_seed
+from purpleloop.control.model_config import (
+    JUDGE_ENV,
+    ModelConfigError,
+    ModelSettings,
+    build_pin,
+    with_seed,
+)
 from purpleloop.reporting.bundle import write_json
 from purpleloop.runtime.supportlab import KEY_ID, supportlab_agent_manifest
 from purpleloop.schemas.phase3 import ModelPin
@@ -114,6 +120,9 @@ def run_networked_judge_report(
     the endpoint still leaves its completed trials, its call records, and the reason it stopped.
     """
     require_frozen(corpus)
+    if not config.endpoint.strip():
+        # `make judge-report-networked` with PURPLELOOP_JUDGE_ENDPOINT unset passes "".
+        raise ModelConfigError("the judge endpoint is empty; set PURPLELOOP_JUDGE_ENDPOINT")
     if config.trials < 1:
         raise ValueError("at least one trial is required")
     credential = os.environ.get(JUDGE_CREDENTIAL_ENV)
