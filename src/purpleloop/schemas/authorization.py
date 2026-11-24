@@ -12,6 +12,7 @@ from purpleloop.schemas.common import StrictModel, require_identifier, require_u
 from purpleloop.schemas.phase2 import Phase2Grants
 from purpleloop.schemas.phase3 import Phase3Grants
 from purpleloop.schemas.phase4 import Phase4Grants
+from purpleloop.schemas.phase5 import ActionClass, Phase5Grants
 
 
 class AssetScope(StrictModel):
@@ -103,12 +104,21 @@ class BudgetLimits(StrictModel):
 
 
 #: Manifest versions that carry Phase 1 grants and the loopback-fixture posture.
-PHASE1_PLUS: frozenset[str] = frozenset({"1.1.0", "1.2.0", "1.3.0", "1.4.0"})
+PHASE1_PLUS: frozenset[str] = frozenset({"1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0"})
 #: Manifest versions that may carry Phase 2 grants. Phase 3 builds on the supportlab fixture, so
 #: it keeps signed ownership rather than replacing it.
-PHASE2_PLUS: frozenset[str] = frozenset({"1.2.0", "1.3.0", "1.4.0"})
+PHASE2_PLUS: frozenset[str] = frozenset({"1.2.0", "1.3.0", "1.4.0", "1.5.0"})
 #: Manifest versions that may carry Phase 3 grants; 1.4 keeps the model plane it inherits.
-PHASE3_PLUS: frozenset[str] = frozenset({"1.3.0", "1.4.0"})
+PHASE3_PLUS: frozenset[str] = frozenset({"1.3.0", "1.4.0", "1.5.0"})
+#: Manifest versions that carry Phase 4 grants. 1.5 keeps the attestation keys, which the
+#: risk-approval key-separation rule reads.
+PHASE4_PLUS: frozenset[str] = frozenset({"1.4.0", "1.5.0"})
+
+#: The action class each permitted side effect requires in a 1.5 manifest.
+SIDE_EFFECT_ACTION_CLASS: dict[SideEffectClass, ActionClass] = {
+    SideEffectClass.READ: ActionClass.READ,
+    SideEffectClass.WRITE: ActionClass.WRITE,
+}
 
 
 class Phase1Grants(StrictModel):
@@ -118,11 +128,12 @@ class Phase1Grants(StrictModel):
 
 
 class AuthorizationManifest(StrictModel):
-    schema_version: Literal["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0"] = "1.0.0"
+    schema_version: Literal["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0"] = "1.0.0"
     phase1: Phase1Grants | None = None
     phase2: Phase2Grants | None = None
     phase3: Phase3Grants | None = None
     phase4: Phase4Grants | None = None
+    phase5: Phase5Grants | None = None
     engagement_id: str
     owner: str
     approvers: tuple[str, ...]
@@ -235,10 +246,14 @@ class AuthorizationManifest(StrictModel):
             raise ValueError("Phase 3 grants require manifest 1.3 or later")
         if self.schema_version in PHASE3_PLUS:
             self._validate_phase3()
-        if self.schema_version != "1.4.0" and self.phase4 is not None:
-            raise ValueError("Phase 4 grants require manifest 1.4")
-        if self.schema_version == "1.4.0" and self.phase4 is None:
+        if self.schema_version not in PHASE4_PLUS and self.phase4 is not None:
+            raise ValueError("Phase 4 grants require manifest 1.4 or later")
+        if self.schema_version in PHASE4_PLUS and self.phase4 is None:
             raise ValueError("Phase 4 requires explicit phase4 grants")
+        if self.schema_version != "1.5.0" and self.phase5 is not None:
+            raise ValueError("Phase 5 grants require manifest 1.5")
+        if self.schema_version == "1.5.0":
+            self._validate_phase5()
         if set(self.credential_scopes) != set(self.credential_handles):
             raise ValueError("every credential handle requires one exact scope")
         if any(not operations for operations in self.credential_scopes.values()):
@@ -278,6 +293,20 @@ class AuthorizationManifest(StrictModel):
         if grants.model_assets & target_origins:
             raise ValueError("a model endpoint can never be a target asset origin")
 
+    def _validate_phase5(self) -> None:
+        grants = self.phase5
+        if grants is None:
+            raise ValueError("Phase 5 requires explicit phase5 grants")
+        # The action-class set is the surface ``capability_delta`` compares, so it may never be
+        # narrower than the side effects the manifest actually permits.
+        required = {SIDE_EFFECT_ACTION_CLASS[effect] for effect in self.allowed_side_effects}
+        if not required <= grants.action_classes:
+            raise ValueError("every permitted side effect requires its action class")
+        asset_ids = {asset.asset_id for asset in self.assets}
+        if grants.telemetry is not None and grants.telemetry not in asset_ids:
+            # No new egress: the collector is a signed asset on the fixture network (plan §2.4).
+            raise ValueError("the telemetry collector must be a signed asset")
+
     def resource_owner(self, resource_id: str) -> str | None:
         """Resolve ownership from signed data only. Returns None when nothing is signed."""
         return self.phase2.owner_of(resource_id) if self.phase2 is not None else None
@@ -287,3 +316,16 @@ class AuthorizationManifest(StrictModel):
 
     def manifest_digest(self) -> str:
         return self.digest(exclude={"signature"})
+
+    def capability_surface_digest(self) -> str:
+        """The manifest digest with its own risk-approval list emptied.
+
+        A 1.5 manifest names its approvals by digest, so an approval cannot name the full
+        manifest digest without a cycle. It names this instead: everything the manifest grants,
+        validity window included, except the list of approvals that grant it. For a manifest
+        without Phase 5 grants this is exactly :meth:`manifest_digest`.
+        """
+        if self.phase5 is None or not self.phase5.risk_approvals:
+            return self.manifest_digest()
+        unapproved = self.phase5.model_copy(update={"risk_approvals": frozenset()})
+        return self.model_copy(update={"phase5": unapproved}).manifest_digest()

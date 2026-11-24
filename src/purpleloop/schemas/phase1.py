@@ -30,11 +30,15 @@ from purpleloop.schemas.phase3 import (
     TokenAccounting,
     VerdictProvenance,
 )
+from purpleloop.schemas.phase5 import ImportSource, ScenarioLane, ScenarioOrigin
 from purpleloop.schemas.scenario import Scenario
+
+#: Scenario versions that may carry agent steps; 1.4 keeps the agent surface it inherits.
+AGENT_SCENARIO_VERSIONS: frozenset[str] = frozenset({"1.3.0", "1.4.0"})
 
 
 class Versioned(StrictModel):
-    schema_version: Literal["1.1.0", "1.2.0", "1.3.0"] = "1.1.0"
+    schema_version: Literal["1.1.0", "1.2.0", "1.3.0", "1.4.0"] = "1.1.0"
 
 
 class Stage(StrEnum):
@@ -116,6 +120,28 @@ class Phase1Scenario(Versioned):
     agent_task: AgentTask | None = None
     judge_rubric_id: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
     repetitions: int | None = Field(default=None, ge=1, le=100)
+    # Scenario 1.4 additions (Phase 5). Absent on 1.1-1.3 documents; required on 1.4 where noted.
+    origin: ScenarioOrigin | None = None
+    import_source: ImportSource | None = None
+    #: True when the payload is published upstream, so results on it may be contaminated by
+    #: model training data and are labelled as such.
+    public_exposure: bool | None = None
+    lane: ScenarioLane | None = None
+
+    @model_validator(mode="after")
+    def validate_origin(self) -> Phase1Scenario:
+        additions = (self.origin, self.import_source, self.public_exposure, self.lane)
+        if self.schema_version != "1.4.0":
+            if any(value is not None for value in additions):
+                raise ValueError("origin, import source, exposure, and lane require scenario 1.4")
+            return self
+        if self.origin is None or self.public_exposure is None:
+            raise ValueError("a 1.4 scenario must state its origin and public exposure")
+        if (self.origin == "imported") != (self.import_source is not None):
+            raise ValueError("an import source is required exactly when the origin is imported")
+        if self.import_source is not None and self.import_source.license != self.license:
+            raise ValueError("the import source license must match the scenario license")
+        return self
 
     @model_validator(mode="after")
     def validate_steps(self) -> Phase1Scenario:
@@ -136,8 +162,8 @@ class Phase1Scenario(Versioned):
         agent_steps = any(
             step.adapter == "agent" for step in (*self.clean_steps, *self.attack_steps)
         )
-        if agent_steps and self.schema_version != "1.3.0":
-            raise ValueError("agent steps require scenario 1.3")
+        if agent_steps and self.schema_version not in AGENT_SCENARIO_VERSIONS:
+            raise ValueError("agent steps require scenario 1.3 or later")
         if agent_steps and self.surface != "agent":
             raise ValueError("agent steps require an agent surface declaration")
         if self.surface == "agent" and not agent_steps:
