@@ -14,6 +14,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import Annotated, Literal
 
 import typer
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -23,8 +24,21 @@ from purpleloop.adapters.model_provider import OpenAICompatibleProvider, Provide
 from purpleloop.control.attacker import BoundedAttacker
 from purpleloop.control.lanes import AGENT_LANE
 from purpleloop.control.manifest import ManifestVerifier
+from purpleloop.control.model_config import (
+    ModelConfigError,
+    ModelSettings,
+    build_pin,
+    with_seed,
+)
 from purpleloop.control.phase3_tools import INTENT_OPERATIONS
 from purpleloop.control.plan_compiler import compile_plan
+from purpleloop.judge_report import (
+    DEFAULT_JUDGE_TIMEOUT_SECONDS,
+    DEFAULT_JUDGE_TOKEN_BUDGET,
+    JudgeRunConfig,
+    JudgeUnavailable,
+    run_networked_judge_report,
+)
 from purpleloop.reporting.bundle import inventory, reports, verify_bundle, write_json
 from purpleloop.runtime.demo import ROOT
 from purpleloop.runtime.inspect_bridge import evaluate_runner
@@ -46,11 +60,20 @@ from purpleloop.runtime.supportlab import (
 )
 from purpleloop.schemas.authorization import AuthorizationManifest
 from purpleloop.schemas.phase1 import Phase1Scenario, RunSummary, load_scenario, scenario_paths
-from purpleloop.schemas.phase3 import DecodingParameters, ModelPin
+from purpleloop.schemas.phase3 import ModelPin
 from purpleloop.schemas.phase4 import StochasticRunOutcome
-from purpleloop.scoring.evaluator_redteam import agreement, load_corpus, resistance
+from purpleloop.scoring.evaluator_redteam import (
+    agreement,
+    load_corpus,
+    require_frozen,
+    resistance,
+)
 from purpleloop.scoring.judge import HybridJudge, ScriptedJudge
-from purpleloop.scoring.phase4 import classify_stochastic_failure, reproduction_record
+from purpleloop.scoring.phase4 import (
+    BUDGET_REASONS,
+    classify_stochastic_failure,
+    reproduction_record,
+)
 
 SCENARIOS = ROOT / "scenarios" / "agent"
 REDTEAM = ROOT / "scenarios" / "evaluator-redteam" / "cases.json"
@@ -58,6 +81,57 @@ CREDENTIAL_ENV = "PURPLELOOP_MODEL_API_KEY"
 
 #: Where one repetition writes its bundle. Each repetition is its own verifiable bundle.
 DirectoryFor = Callable[[int], Path]
+
+# Model-plane options shared by every networked command. Each names its environment variable;
+# the command line wins over the environment, and the environment over the earlier default.
+TemperatureOption = Annotated[
+    float | None, typer.Option(help="Sampling temperature (env PURPLELOOP_MODEL_TEMPERATURE; 0)")
+]
+TopPOption = Annotated[
+    float | None, typer.Option(help="Nucleus top_p (env PURPLELOOP_MODEL_TOP_P; 1)")
+]
+ModelSeedOption = Annotated[
+    str | None,
+    typer.Option(help="Model decoding seed, or 'none' (env PURPLELOOP_MODEL_SEED; 42)"),
+]
+MaxTokensOption = Annotated[
+    int | None,
+    typer.Option(help="Output token cap per call (env PURPLELOOP_MODEL_MAX_OUTPUT_TOKENS; 512)"),
+]
+PriceInputOption = Annotated[
+    int | None,
+    typer.Option(
+        help=(
+            "Input price, micro-USD per 1k tokens "
+            "(env PURPLELOOP_MODEL_PRICE_INPUT_MICROUSD_PER_1K)"
+        )
+    ),
+]
+PriceOutputOption = Annotated[
+    int | None,
+    typer.Option(
+        help=(
+            "Output price, micro-USD per 1k tokens "
+            "(env PURPLELOOP_MODEL_PRICE_OUTPUT_MICROUSD_PER_1K)"
+        )
+    ),
+]
+DeclaredFreeOption = Annotated[
+    str | None,
+    typer.Option(
+        help="Acknowledge a hosted model as free by naming its model id (command line only)"
+    ),
+]
+ModelIdOption = Annotated[str | None, typer.Option(help="Model id (env PURPLELOOP_MODEL_ID)")]
+ModelVersionOption = Annotated[
+    str | None, typer.Option(help="Model version or digest (env PURPLELOOP_MODEL_VERSION)")
+]
+CostBudgetOption = Annotated[
+    int | None,
+    typer.Option(
+        help="Signed per-run cost cap, micro-USD (env PURPLELOOP_MODEL_COST_BUDGET_MICROUSD; 1e6)"
+    ),
+]
 
 
 class AgentFixtureMode(StrEnum):
@@ -77,6 +151,20 @@ class ModelUnavailableForLane(RuntimeError):
     reason_code = "STOCHASTIC_LANE_UNAVAILABLE"
 
 
+def run_outcome(summary: RunSummary) -> Literal["pass", "fail", "budget-stop"]:
+    """A completed run's outcome. A run its signed cap stopped is a budget stop, not a failure.
+
+    Before the price was configurable no networked run could exhaust its cost cap, so a stop
+    here was never seen; with a priced hosted pin it is the expected way a cap shows itself, and
+    reporting it as a scenario failure would conflate the budget with the defense.
+    """
+    if summary.status == "passed":
+        return "pass"
+    if summary.reason in BUDGET_REASONS:
+        return "budget-stop"
+    return "fail"
+
+
 def _write_outcome(output_dir: Path, outcome: StochasticRunOutcome) -> None:
     """Surface the run's classified outcome. A failure is surfaced, never silently tolerated.
 
@@ -93,8 +181,91 @@ def _write_outcome(output_dir: Path, outcome: StochasticRunOutcome) -> None:
         pass
 
 
-def networked_provider(endpoint: str, profile: str) -> tuple[Provider, ModelPin]:
-    """Build a networked provider, or refuse. There is no fallback to the offline provider."""
+class SeedPolicy(StrEnum):
+    """How the model seed varies across the repetitions of one scenario.
+
+    ``fixed`` is the earlier behaviour: every repetition runs under the same seed. Under sampling
+    that makes a seeded provider return the same reply every time, so a repetition set would
+    report a reproduction of 1.0 that measures the seed, not the model. ``per-repetition`` gives
+    repetition *i* the seed ``seed + i``; each repetition's manifest signs its own pin, so every
+    repetition is still individually reproducible and the set measures sampling variance.
+    """
+
+    FIXED = "fixed"
+    PER_REPETITION = "per-repetition"
+
+
+SeedPolicyOption = Annotated[
+    SeedPolicy | None,
+    typer.Option(help="Seed across repetitions (env PURPLELOOP_MODEL_SEED_POLICY; fixed)"),
+]
+
+#: Signed per-run cost cap when none is configured: the value every earlier manifest carried.
+DEFAULT_COST_BUDGET_MICROUSD = 1_000_000
+
+
+def resolve_seed_policy(value: SeedPolicy | None) -> SeedPolicy:
+    if value is not None:
+        return value
+    raw = os.environ.get("PURPLELOOP_MODEL_SEED_POLICY")
+    try:
+        return SeedPolicy(raw) if raw else SeedPolicy.FIXED
+    except ValueError as exc:
+        raise ModelConfigError(f"unknown seed policy {raw!r}") from exc
+
+
+def resolve_cost_budget(value: int | None, *, name: str = "PURPLELOOP_MODEL") -> int:
+    if value is not None:
+        return value
+    raw = os.environ.get(f"{name}_COST_BUDGET_MICROUSD")
+    if not raw:
+        return DEFAULT_COST_BUDGET_MICROUSD
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ModelConfigError(f"{name}_COST_BUDGET_MICROUSD must be an integer") from exc
+
+
+def seed_policy_label(policy: SeedPolicy, pin: ModelPin | None) -> dict[str, str]:
+    """The repetition set's ``seed_policy`` argument; empty (the old label) under a fixed seed."""
+    if policy == SeedPolicy.FIXED or pin is None:
+        return {}
+    return {"seed_policy": f"model-seed-{pin.decoding.seed}-plus-repetition-index"}
+
+
+def refuse_offline_model_options(
+    settings: ModelSettings, seed_policy: SeedPolicy | None, cost_budget: int | None
+) -> None:
+    """A model option on an offline run would be silently ignored, so it is refused instead.
+
+    Only command-line options are checked: environment variables configure the networked lane
+    and are legitimately present in a shell that also runs offline commands.
+    """
+    given = [
+        name
+        for name, value in (
+            *vars(settings).items(),
+            ("seed_policy", seed_policy),
+            ("cost_budget_microusd", cost_budget),
+        )
+        if value is not None
+    ]
+    if given:
+        raise ModelConfigError(
+            f"{', '.join(given)} configure a networked model and need --endpoint; the offline "
+            "provider would ignore them"
+        )
+
+
+def networked_provider(
+    endpoint: str, profile: str, settings: ModelSettings | None = None
+) -> tuple[Provider, ModelPin]:
+    """Build a networked provider, or refuse. There is no fallback to the offline provider.
+
+    The credential is checked first, so a hosted lane without one is still a recorded skip. A
+    hosted lane *with* one but without a declared price is then refused outright: running it
+    would record its cost as zero and leave the signed cost cap unable to fire.
+    """
     credential = os.environ.get(CREDENTIAL_ENV)
     if profile == "openai-compatible" and not credential:
         raise ModelUnavailableForLane(
@@ -102,13 +273,11 @@ def networked_provider(endpoint: str, profile: str) -> tuple[Provider, ModelPin]
         )
     from purpleloop.adapters.agent import SYSTEM_PROMPT_HASH
 
-    pin = ModelPin(
+    pin = build_pin(
         pin_id="networked",
-        provider=profile,  # type: ignore[arg-type]
-        model_id=os.environ.get("PURPLELOOP_MODEL_ID", "unspecified-model"),
-        model_version=os.environ.get("PURPLELOOP_MODEL_VERSION"),
-        decoding=DecodingParameters(seed=42),
+        profile=profile,
         system_prompt_hash=SYSTEM_PROMPT_HASH,
+        settings=settings or ModelSettings(),
     )
     provider = OpenAICompatibleProvider(
         base_url=endpoint,
@@ -149,24 +318,38 @@ def _runner_factory(
     pin_id: str,
     pin: ModelPin | None,
     fixture_mode: AgentFixtureMode = AgentFixtureMode.IN_PROCESS,
+    seed_policy: SeedPolicy = SeedPolicy.FIXED,
+    cost_microusd_budget: int = DEFAULT_COST_BUDGET_MICROUSD,
 ) -> tuple[AuthorizationManifest, RunnerFactory, Execute]:
-    # The manifest signs the origin the provider will actually connect to, not the URL it was
-    # given: a base URL carries an API path (Ollama's and most hosted APIs' ``/v1``) that a
-    # signed model asset may not, and signing anything else would let the two disagree.
-    manifest = supportlab_agent_manifest(
-        manifest_key,
-        seed=seed,
-        judge=judge,
-        model_endpoint=provider.endpoint if provider is not None else None,
-        model_pin=pin,
-    )
+    def sign(run_pin: ModelPin | None) -> AuthorizationManifest:
+        # The manifest signs the origin the provider will actually connect to, not the URL it was
+        # given: a base URL carries an API path (Ollama's and most hosted APIs' ``/v1``) that a
+        # signed model asset may not, and signing anything else would let the two disagree.
+        return supportlab_agent_manifest(
+            manifest_key,
+            seed=seed,
+            judge=judge,
+            model_endpoint=provider.endpoint if provider is not None else None,
+            model_pin=run_pin,
+            cost_microusd_budget=cost_microusd_budget,
+        )
+
+    manifest = sign(pin)
     verifier = ManifestVerifier({KEY_ID: manifest_key.public_key()})
     verifier.verify(manifest)
+    if seed_policy == SeedPolicy.PER_REPETITION and (pin is None or pin.decoding.seed is None):
+        raise ModelConfigError("the per-repetition seed policy needs a seeded networked pin")
     # The fixture each repetition will run against, created in the factory and started by the
     # execute wrapper: a compose fixture needs an async start the synchronous factory cannot do.
-    pending: list[InProcessSupportlab | ComposeSupportlab] = []
+    # Each entry carries the manifest that repetition was built under.
+    pending: list[tuple[InProcessSupportlab | ComposeSupportlab, AuthorizationManifest]] = []
 
     def factory(index: int) -> tuple[PurpleTeamRunner, Path]:
+        run_manifest = manifest
+        if seed_policy == SeedPolicy.PER_REPETITION:
+            assert pin is not None and pin.decoding.seed is not None
+            run_manifest = sign(with_seed(pin, pin.decoding.seed + index))
+            verifier.verify(run_manifest)
         tokens = actor_credentials()
         control = actor_credentials()["customer-a"]
         directory = directory_for(index)
@@ -188,10 +371,10 @@ def _runner_factory(
             )
         else:
             fixture = InProcessSupportlab(tokens, control)
-        pending.append(fixture)
+        pending.append((fixture, run_manifest))
         runner = build_agent_runner(
             directory,
-            manifest,
+            run_manifest,
             verifier,
             actor_tokens=tokens,
             control=control,
@@ -209,10 +392,15 @@ def _runner_factory(
         run_id: str,
         directory: Path,
     ) -> RunSummary:
-        fixture = pending.pop()
+        fixture, built_under = pending.pop()
         if isinstance(fixture, ComposeSupportlab):  # pragma: no cover - container lane
             await fixture.start()
-        return await _inspect_execute(runner, scenario, run_manifest, run_id, directory, pin)
+        # Under a fixed seed this is the manifest passed in. Under per-repetition seeding it is
+        # the repetition's own, so the signed pin and the pin the model client calls with agree.
+        run_pin = pin
+        if built_under is not run_manifest and built_under.phase3 is not None and pin is not None:
+            run_pin = built_under.phase3.pin(pin.pin_id)
+        return await _inspect_execute(runner, scenario, built_under, run_id, directory, run_pin)
 
     return manifest, factory, execute
 
@@ -274,6 +462,39 @@ async def run_offline_corpus(
     return scenarios, summaries
 
 
+def _networked_judge_report(output_dir: Path, config: JudgeRunConfig) -> None:
+    try:
+        payload = run_networked_judge_report(load_corpus(REDTEAM), config, output_dir)
+    except JudgeUnavailable as exc:
+        typer.echo(f"SKIPPED: {exc}", err=True)
+        raise typer.Exit(0) from None
+    except Exception as exc:  # noqa: BLE001 -- every stop is reported with its reason code
+        reason = str(getattr(exc, "reason_code", "") or type(exc).__name__)
+        typer.echo(f"FAILED: {reason}: {exc}", err=True)
+        raise typer.Exit(1) from None
+    for trial in payload["trials"]:
+        agreement_ = trial["agreement"]
+        control = trial.get("negative_control_without_delimiting")
+        typer.echo(
+            f"trial={trial['trial']} seed={trial['seed']} "
+            f"resistance={trial['hardened']['resistance']:.3f} "
+            + (f"(negative control {control['resistance']:.3f}) " if control else "")
+            + f"alpha={agreement_['krippendorff_alpha']:.3f} "
+            f"[{agreement_['alpha_ci_low']:.3f},{agreement_['alpha_ci_high']:.3f}] "
+            f"n={agreement_['n']} kappa={agreement_['cohen_kappa']} "
+            f"kappa_n={agreement_['kappa_n']} swap={agreement_['order_swap_consistency']:.3f} "
+            f"critical_false_passes={len(trial['hardened']['critical_false_passes'])}"
+        )
+    pooled = payload["pooled_agreement"]
+    calls = payload["model_calls"]
+    typer.echo(
+        f"pooled alpha={pooled['krippendorff_alpha']:.3f} n={pooled['n']} (case-trials) "
+        f"calls={calls['calls']} tokens={calls['tokens']} cost_microusd={calls['cost_microusd']} "
+        f"thinking_stripped={payload['thinking']['stripped']} "
+        f"unparseable={payload['thinking']['unparseable_replies']} (advisory)"
+    )
+
+
 def register(app: typer.Typer) -> None:
     @app.command("agent-run")
     def agent_run(
@@ -286,13 +507,41 @@ def register(app: typer.Typer) -> None:
         endpoint: str | None = None,
         profile: str = "openai-compatible",
         fixture: AgentFixtureMode = AgentFixtureMode.IN_PROCESS,
+        temperature: TemperatureOption = None,
+        top_p: TopPOption = None,
+        model_seed: ModelSeedOption = None,
+        max_output_tokens: MaxTokensOption = None,
+        price_input_microusd_per_1k: PriceInputOption = None,
+        price_output_microusd_per_1k: PriceOutputOption = None,
+        declared_free: DeclaredFreeOption = None,
+        model_id: ModelIdOption = None,
+        model_version: ModelVersionOption = None,
+        seed_policy: SeedPolicyOption = None,
+        cost_budget_microusd: CostBudgetOption = None,
     ) -> None:
         """Run one agent scenario, optionally repeated, judged, and probed by the attacker."""
         provider: Provider | None = None
         pin: ModelPin | None = None
+        settings = ModelSettings(
+            temperature=temperature,
+            top_p=top_p,
+            seed=model_seed,
+            max_output_tokens=max_output_tokens,
+            price_input_microusd_per_1k=price_input_microusd_per_1k,
+            price_output_microusd_per_1k=price_output_microusd_per_1k,
+            declared_free=declared_free,
+            model_id=model_id,
+            model_version=model_version,
+        )
         try:
+            policy = SeedPolicy.FIXED
+            cost_budget = DEFAULT_COST_BUDGET_MICROUSD
             if endpoint is not None:
-                provider, pin = networked_provider(endpoint, profile)
+                provider, pin = networked_provider(endpoint, profile, settings)
+                policy = resolve_seed_policy(seed_policy)
+                cost_budget = resolve_cost_budget(cost_budget_microusd)
+            else:
+                refuse_offline_model_options(settings, seed_policy, cost_budget_microusd)
             scenario = load_scenario(scenario_path)
             key = Ed25519PrivateKey.generate()
             manifest, factory, execute = _runner_factory(
@@ -312,6 +561,8 @@ def register(app: typer.Typer) -> None:
                 pin_id="networked" if pin else "offline-scripted",
                 pin=pin,
                 fixture_mode=fixture,
+                seed_policy=policy,
+                cost_microusd_budget=cost_budget,
             )
             compile_plan(scenario, manifest, lane=AGENT_LANE)
             report, summaries = asyncio.run(
@@ -322,6 +573,7 @@ def register(app: typer.Typer) -> None:
                     repetitions=repetitions,
                     run_id=scenario.scenario_id,
                     execute=execute,
+                    **seed_policy_label(policy, pin),
                 )
             )
         except ModelUnavailableForLane as exc:
@@ -367,7 +619,7 @@ def register(app: typer.Typer) -> None:
         _write_outcome(
             output_dir,
             StochasticRunOutcome(
-                outcome="pass" if enriched.status == "passed" else "fail",
+                outcome=run_outcome(enriched),
                 reason_code=enriched.reason or enriched.status.upper(),
                 scenario_id=scenario.scenario_id,
                 model_pin_id=pin_id,
@@ -384,10 +636,95 @@ def register(app: typer.Typer) -> None:
             raise typer.Exit(1)
 
     @app.command("judge-report")
-    def judge_report(output_dir: Path = Path("artifacts/judge")) -> None:
-        """Score the judge against the frozen evaluator red-team corpus."""
+    def judge_report(
+        output_dir: Path = Path("artifacts/judge"),
+        judge_endpoint: Annotated[
+            str | None,
+            typer.Option(
+                envvar="PURPLELOOP_JUDGE_ENDPOINT",
+                help="Networked judge base URL; omitted, the scripted stand-in is scored",
+            ),
+        ] = None,
+        judge_profile: Annotated[
+            str, typer.Option(envvar="PURPLELOOP_JUDGE_PROFILE")
+        ] = "openai-compatible",
+        trials: Annotated[
+            int, typer.Option(envvar="PURPLELOOP_JUDGE_TRIALS", help="Passes over the corpus")
+        ] = 1,
+        negative_control: bool = True,
+        judge_model_id: Annotated[
+            str | None, typer.Option(help="(env PURPLELOOP_JUDGE_MODEL_ID)")
+        ] = None,
+        judge_model_version: Annotated[
+            str | None, typer.Option(help="(env PURPLELOOP_JUDGE_MODEL_VERSION)")
+        ] = None,
+        judge_temperature: Annotated[
+            float | None, typer.Option(help="(env PURPLELOOP_JUDGE_TEMPERATURE; 0)")
+        ] = None,
+        judge_top_p: Annotated[
+            float | None, typer.Option(help="(env PURPLELOOP_JUDGE_TOP_P; 1)")
+        ] = None,
+        judge_seed: Annotated[
+            str | None, typer.Option(help="Seed or 'none' (env PURPLELOOP_JUDGE_SEED; 42)")
+        ] = None,
+        judge_max_output_tokens: Annotated[
+            int | None, typer.Option(help="(env PURPLELOOP_JUDGE_MAX_OUTPUT_TOKENS; 512)")
+        ] = None,
+        judge_price_input_microusd_per_1k: Annotated[
+            int | None, typer.Option(help="(env PURPLELOOP_JUDGE_PRICE_INPUT_MICROUSD_PER_1K)")
+        ] = None,
+        judge_price_output_microusd_per_1k: Annotated[
+            int | None, typer.Option(help="(env PURPLELOOP_JUDGE_PRICE_OUTPUT_MICROUSD_PER_1K)")
+        ] = None,
+        judge_declared_free: Annotated[
+            str | None, typer.Option(help="Acknowledge a hosted judge as free by its model id")
+        ] = None,
+        judge_timeout_seconds: Annotated[
+            float, typer.Option(envvar="PURPLELOOP_JUDGE_TIMEOUT_SECONDS")
+        ] = DEFAULT_JUDGE_TIMEOUT_SECONDS,
+        judge_token_budget: Annotated[
+            int, typer.Option(envvar="PURPLELOOP_JUDGE_TOKEN_BUDGET")
+        ] = DEFAULT_JUDGE_TOKEN_BUDGET,
+        judge_cost_budget_microusd: Annotated[
+            int | None, typer.Option(help="(env PURPLELOOP_JUDGE_COST_BUDGET_MICROUSD; 1e6)")
+        ] = None,
+    ) -> None:
+        """Score the judge against the frozen evaluator red-team corpus.
+
+        Without ``--judge-endpoint`` this scores the scripted stand-in, exactly as in Phase 3.
+        With it, a real pinned judge is scored over ``--trials`` passes with order swaps; the
+        result is advisory and the command exits zero when it completes.
+        """
+        if judge_endpoint is not None:
+            settings = ModelSettings(
+                temperature=judge_temperature,
+                top_p=judge_top_p,
+                seed=judge_seed,
+                max_output_tokens=judge_max_output_tokens,
+                price_input_microusd_per_1k=judge_price_input_microusd_per_1k,
+                price_output_microusd_per_1k=judge_price_output_microusd_per_1k,
+                declared_free=judge_declared_free,
+                model_id=judge_model_id,
+                model_version=judge_model_version,
+            )
+            _networked_judge_report(
+                output_dir,
+                JudgeRunConfig(
+                    endpoint=judge_endpoint,
+                    profile=judge_profile,
+                    settings=settings,
+                    trials=trials,
+                    negative_control=negative_control,
+                    timeout_seconds=judge_timeout_seconds,
+                    token_budget=judge_token_budget,
+                    cost_microusd_budget=resolve_cost_budget(
+                        judge_cost_budget_microusd, name="PURPLELOOP_JUDGE"
+                    ),
+                ),
+            )
+            return
         try:
-            corpus = load_corpus(REDTEAM)
+            corpus = require_frozen(load_corpus(REDTEAM))
             hardened = resistance(HybridJudge(ScriptedJudge()), corpus)
             undelimited = resistance(HybridJudge(ScriptedJudge()), corpus, delimit=False)
             scores = agreement(HybridJudge(ScriptedJudge()), corpus)

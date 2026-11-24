@@ -141,6 +141,10 @@ def supportlab_agent_manifest(
     model_endpoint: str | None = None,
     model_pin: ModelPin | None = None,
     judge: bool = False,
+    judge_pin: ModelPin | None = None,
+    cost_microusd_budget: int = 1_000_000,
+    token_budget: int = 200_000,
+    wall_time_seconds: float | None = None,
 ) -> AuthorizationManifest:
     """Manifest 1.3 for the agent lane.
 
@@ -148,6 +152,9 @@ def supportlab_agent_manifest(
     grant is the control, and the scripted provider has nowhere to go. Passing ``model_endpoint``
     and a networked ``model_pin`` opens the model plane for the stochastic lane; the target assets
     stay loopback either way, which the schema enforces (ADR 0008).
+
+    ``judge_pin`` replaces the scripted judge's pin (a networked judge), and the budgets are the
+    signed caps a hosted run is held to. Every default reproduces the earlier manifest exactly.
     """
     base = supportlab_manifest(key, seed=seed, now=now)
     pin = model_pin or ModelPin(
@@ -165,7 +172,7 @@ def supportlab_agent_manifest(
         expected_input_tokens_per_call=418,
         expected_output_tokens_per_call=27,
     )
-    judge_pin = ModelPin(
+    judge_pin = judge_pin or ModelPin(
         pin_id=JUDGE_PIN,
         provider="offline",
         model_id="supportlab-scripted-judge",
@@ -184,12 +191,12 @@ def supportlab_agent_manifest(
                 model_assets=frozenset({model_endpoint} if model_endpoint else ()),
                 model_credential_handle="supportlab-model",
                 model_pins=pins,
-                token_budget=200_000,
-                cost_microusd_budget=1_000_000,
+                token_budget=token_budget,
+                cost_microusd_budget=cost_microusd_budget,
                 max_agent_steps=8,
                 max_tool_intents_per_turn=4,
                 judge_enabled=judge,
-                judge_model_pin=JUDGE_PIN if judge else None,
+                judge_model_pin=judge_pin.pin_id if judge else None,
             ),
             "allowed_adapters": frozenset({"http", "tool", "chat", "browser", "control", "agent"}),
             "allowed_operations": operations,
@@ -201,8 +208,13 @@ def supportlab_agent_manifest(
                 update={
                     "requests": 600,
                     "records": 600,
-                    "tokens": 200_000,
-                    "cost_microusd": 1_000_000,
+                    "tokens": token_budget,
+                    "cost_microusd": cost_microusd_budget,
+                    **(
+                        {"wall_time_seconds": wall_time_seconds}
+                        if wall_time_seconds is not None
+                        else {}
+                    ),
                 }
             ),
         }
