@@ -92,6 +92,14 @@ uv run purpleloop verify-bundle out/agent-run --attestation
 uv run purpleloop audit-export out/agent-run out/audit.json
 ```
 
+A terminal recording of the one-command demo (`purpleloop smoke-demo`, 14 of 14 passing) followed
+by fail-closed cases (an expired manifest refused with `EXPIRED_MANIFEST`, 17 of 17
+scope-widening mutations denied by `holdout-check`, and the evaluator-injection report) is in
+[docs/demo/phase-demo.cast](docs/demo/phase-demo.cast). Play it with `asciinema play
+docs/demo/phase-demo.cast` or load it in
+[asciinema-player](https://docs.asciinema.org/manual/player/). It was made by
+`scripts/record_demo.py` from commands actually run, and it is not edited.
+
 Fixed sample artifact sets for reviewers — a passing attested run, an admission-denied run,
 and a labelled evidence-integrity incident — live in [docs/samples](docs/samples), with the
 timed walkthrough protocol in [docs/reviewer-walkthrough.md](docs/reviewer-walkthrough.md).
