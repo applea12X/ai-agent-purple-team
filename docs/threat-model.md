@@ -92,3 +92,35 @@ Residual risk is unchanged in kind from Phase 1: adapters remain trusted, the le
 tamper-evident rather than immutable, and a passing run is evidence about these exact fixtures,
 seeds, and defenses only. The browser adds an out-of-process dependency whose bit-level determinism
 is explicitly not claimed; its replay rate is reported on its own.
+
+## Phase 3 and Phase 4 additions
+
+Added in Phase 5 (loose-ends audit, `docs/phase5/loose-ends.md`). Until then this file stopped
+at Phase 2. The controls themselves are not new. Each row names the decision record or test
+where it already lives. Phase 3 adds a model plane, a RAG agent, an adaptive attacker, and a
+judge. Phase 4 adds release machinery and CI gates. The new assets are the signed model origin
+and its credential handle, retrieved chunks and their provenance, the agent's memory, the frozen
+evaluator labels, the committed gate baselines, and the run attestations. The attacker
+additionally controls model output (fully, in the captured-model case), retrieved content in
+nine channels, and the text a judge reads.
+
+| Threat | Phase 3–4 control |
+| --- | --- |
+| A model endpoint used to reach the target, or a rebind onto it | Model origins are a separate signed plane, disjoint from every target asset by schema; `SafetyRuntime.authorize_model` refuses a resolution that lands on a signed target endpoint; no plan can address the model ([ADR 0008](adr/0008-model-plane-separate-from-target-plane.md), `tests/phase3/test_model_plane.py`) |
+| A captured model emits out-of-scope or invented actions | Intents are typed, validated against their argument models, compiled from a closed vocabulary, and capped per turn; an invented operation is a recorded refusal (`tests/phase3/test_compromised_model.py`, stand-in model only) |
+| Indirect injection through retrieved content | Every chunk carries source and trust level into evidence; `retrieval-provenance-guard` delimits untrusted content and, since `f20f482`, the email sink itself refuses after an untrusted retrieval |
+| An advisory component deciding a binding verdict | `VerdictProvenance` is required on every scored artifact and `require_binding()` guards run status, mitigation credit, and corpus metrics; attacker probes run after every binding measurement ([ADR 0009](adr/0009-advisory-versus-binding-verdicts.md) and its amendment) |
+| Evidence-borne injection against the judge | Typed, bounded, delimited judge input; citations validated; abstention is a valid outcome; verdicts advisory ([ADR 0010](adr/0010-judge-input-and-abstention.md)) |
+| Model credential disclosure | Broker-held handle, absent from model context and from evidence; the stub-transport tests check the header carries it and the record does not |
+| Cost or token runaway | Token and cost charged to the signed budget; a cap breach ends the run fail-closed with a budget outcome |
+| A real-model or advisory result turning CI red or green | Gates read deterministic verdicts only, rejected by type at the gate boundary ([ADR 0013](adr/0013-enforcing-gates.md)) |
+| A tampered bundle presented as a release | Ed25519/JCS run attestation over code, lockfile, corpus, manifests, and pins, verified offline ([ADR 0012](adr/0012-run-attestation-format.md)) |
+| Tuning against the held-out set | The holdout is digest-pinned, and a grep test keeps every module except its executor from reading it |
+| A credential reaching committed samples | `tests/phase4/test_sample_hygiene.py` scans `docs/samples/` for credential fields, token shapes, canaries, and keys, and is tested against planted leaks |
+
+Residual risk added by these phases: the real-model evidence is one scenario on one local model
+(Phase 4, WP4.0.1). Email is the only sink gated by retrieval provenance, and the taint is per
+actor and per most recent run, not full information flow. Retrieval is lexical
+([ADR 0011](adr/0011-deterministic-retrieval-without-embeddings.md)). There is no
+code-execution surface, so unexpected code execution is covered only as a containment property.
+The only release attestation so far used an ephemeral key.

@@ -158,3 +158,67 @@ The agent surface itself introduces no new authority. The assistant parses inten
 validated against its typed argument model, compiled from a closed operation vocabulary that lives
 in trusted registry code, and executed one at a time by `SafetyRuntime` under the signed per-turn
 cap. An intent has no field that could name an adapter, a target, a credential, or a budget.
+
+## Diagrams
+
+These three diagrams were planned as WP4.5.2 and added in the Phase 5 loose-ends audit. They
+draw the PRD §4 flow and ADRs 0008 and 0009 as built. They introduce nothing the sections above
+and the ADRs do not already say. GitHub renders Mermaid inline.
+
+### The paired loop, inside one authority boundary
+
+```mermaid
+flowchart LR
+    subgraph runner["PurpleTeamRunner (lifecycle owner)"]
+        direction LR
+        P[provision] --> S[seed] --> C[clean task] --> A[baseline attack] --> SC[score]
+        SC --> D[detect] --> SD[select defense] --> R[reset] --> RP[replay] --> T[teardown]
+    end
+    runner -- "every target-facing action,<br/>including parsed model intents" --> K
+    subgraph K["SafetyRuntime (per-action boundary)"]
+        direction TB
+        K1[manifest signature, validity, revocation] --> K2[policy: asset, tenant, resource, tool, egress]
+        K2 --> K3[budget reservation and kill-switch ownership] --> K4[adapter I/O] --> K5[redact, then append to ledger]
+    end
+    K4 --> F[(disposable fixture)]
+    T -. "finally: always runs, flushes evidence" .-> L[(hash-chained ledger + bundle)]
+    K5 --> L
+```
+
+### Two planes: target and model (ADR 0008)
+
+```mermaid
+flowchart LR
+    subgraph harness["Harness (trusted computing base)"]
+        RT[SafetyRuntime]
+        MC[ModelClient]
+        AG[agent adapter: parses intents only]
+    end
+    subgraph target["Target plane: signed loopback assets"]
+        RL[ingress relay] --> FX[supportlab fixture]
+        FX --- DB[(PostgreSQL, no published port)]
+    end
+    subgraph model["Model plane: one exact signed origin"]
+        M[(model endpoint)]
+    end
+    RT -- "plan-addressable actions" --> RL
+    MC -- "authorize_model: exact origin,<br/>never a target endpoint" --> M
+    AG -- "intent text, untrusted" --> RT
+    MC -- "completion as data" --> AG
+    FX -. "no egress; never calls a model" .-x M
+```
+
+### Three verdict kinds, one gate boundary (ADR 0009)
+
+```mermaid
+flowchart LR
+    O[deterministic state oracle] -->|binding| B{require_binding}
+    J[hybrid judge, only where the oracle abstained] -->|advisory| X[report panel:<br/>not binding, gates nothing]
+    S[real-model repetitions] -->|pinned-stochastic| X
+    AT[adaptive attacker probes,<br/>run after binding measurement] -->|advisory| X
+    B --> RS[run status]
+    B --> MI[mitigation credit]
+    B --> CM[corpus metrics]
+    RS & MI & CM --> G[five enforcing CI gates, ADR 0013]
+    X -. "rejected by type" .-x G
+```

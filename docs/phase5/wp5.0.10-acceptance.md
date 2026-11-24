@@ -61,8 +61,8 @@ tests, so the per-scenario pins are new tests next to them:
 
 **Runtime cost.** The pins add about 41 s of test time. That is about 1.2× the corpus tests
 they refine, because they also verify bundles and ledgers for the agent lane, which the agent
-corpus test does not. Against WP5.0.1's 1,039 s suite that is about 4%. The full-suite figure
-is in the loose-ends commit, `docs/phase5/loose-ends.md`.
+corpus test does not. Against WP5.0.1's 1,039 s suite that is about 4%. The full suite at the end of this branch took
+1,078.20 s (`docs/phase5/loose-ends.md`), 39 s more than WP5.0.1.
 
 ## What this does not show
 
