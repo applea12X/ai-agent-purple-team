@@ -71,6 +71,20 @@ cannot reach one. The stochastic lane is opt-in (`make agent-stochastic` with
 `PURPLELOOP_MODEL_ENDPOINT`, and `PURPLELOOP_MODEL_API_KEY` for a hosted API); a missing credential
 is a recorded skip and never a silent fall back to the offline provider.
 
+**Real-model knobs (Phase 5).** Decoding, price, and budget are set per run — command line first,
+then environment, then the old default (temperature 0, top_p 1, seed 42, 512 output tokens):
+`PURPLELOOP_MODEL_{TEMPERATURE,TOP_P,SEED,MAX_OUTPUT_TOKENS}` (`SEED=none` is unseeded),
+`PURPLELOOP_MODEL_SEED_POLICY=per-repetition` (repetition *i* signs seed+*i*, so sampled repetitions
+differ), `PURPLELOOP_MODEL_COST_BUDGET_MICROUSD` (the signed per-run cap), and
+`PURPLELOOP_MODEL_PRICE_{INPUT,OUTPUT}_MICROUSD_PER_1K`. A hosted `openai-compatible` profile
+**refuses to run without a price**; a free hosted model needs `--declared-free <model-id>`. Local
+profiles (Ollama, vLLM) default to zero. `agent-corpus` runs all 25 scenarios against the pin;
+`calibrate-pin` and `calibration-check` fix and check per-pin token expectations
+(`baselines/model-calibration/`); `containment-check` holds the compromised-model property over any
+run's bundles; `judge-report --judge-endpoint` scores a real judge (`PURPLELOOP_JUDGE_*`) on the
+frozen corpus — advisory only. A thinking model's leading `<think>` block is stripped before parsing
+and recorded by digest. `make agent-corpus-stochastic` and `make judge-report-networked` wrap these.
+
 Phase 4 adds the CI quality system and release machinery: a fast cross-lane smoke demo, five
 enforcing gates, signed run attestations, a self-contained audit export, a held-out mutation
 set, and a regression registry mapping every accepted finding to its pinning test:
