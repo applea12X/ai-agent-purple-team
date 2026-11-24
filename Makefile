@@ -94,3 +94,10 @@ release-check: holdout-check
 	uv run purpleloop verify-bundle "$$(ls -d artifacts/release-demo/*/ | tail -1)" --attestation
 	uv run purpleloop audit-export "$$(ls -d artifacts/release-demo/*/ | tail -1)" \
 		artifacts/release-audit.json
+
+# Phase 5 contracts lane (phase5.yml job `contracts`): lint, types, and the Phase 5 tests.
+# The whole-package coverage floor applies to the full suite (`make test`), not to this subset.
+.PHONY: phase5-check
+phase5-check: lint typecheck
+	uv run pytest tests/phase5 --no-cov
+	uv run purpleloop phase5-contracts

@@ -1,0 +1,38 @@
+name: phase5
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  # §3 contracts — Manifest 1.5, RiskApproval, ShadowReport, EvaluationMatrix, AdjudicationRecord,
+  # Scenario 1.4, and gate isolation for every new output type. Deterministic, no credentials.
+  # The full suite (and its 85% branch-coverage floor) still runs in phase4.yml's pr-fast job;
+  # this lane runs the Phase 5 tests alone, so it skips the whole-package coverage floor.
+  # Later Phase 5 work packages append their own jobs below.
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - name: Assert the contracts lane holds no model credential
+        run: |
+          if [ -n "$PURPLELOOP_MODEL_API_KEY" ] || [ -n "$PURPLELOOP_MODEL_ENDPOINT" ]; then
+            echo "::error::model credentials must never reach the contracts lane"
+            exit 1
+          fi
+      - run: uv run ruff check . && uv run ruff format --check .
+      - run: uv run mypy
+      - run: uv run pytest tests/phase5 --no-cov --junitxml=artifacts/junit-phase5.xml
+      - run: uv run purpleloop phase5-contracts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase5-contracts-evidence
+          path: artifacts/
