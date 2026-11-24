@@ -750,6 +750,7 @@ class PurpleTeamRunner:
     async def cleanup(self, summary: RunSummary) -> RunSummary:
         integrity = False
         tokens_used = 0
+        cost_microusd = 0
         executed_actions = 0
         teardown = False
         completeness = None
@@ -785,6 +786,10 @@ class PurpleTeamRunner:
                     tokens_used += int(output.get("input_tokens", 0)) + int(
                         output.get("output_tokens", 0)
                     )
+                    # Read from the same evidence as the tokens. Until Phase 5 nothing set this
+                    # field, so every repetition record reported zero cost even when the ledger
+                    # had charged a priced pin.
+                    cost_microusd += int(output.get("cost_microusd", 0))
             if self.lane is not PHASE1_LANE:
                 completeness = evidence_completeness(events)
         except Exception:
@@ -817,6 +822,7 @@ class PurpleTeamRunner:
                 "teardown_complete": teardown,
                 "elapsed_seconds": elapsed,
                 "tokens_used": tokens_used,
+                "cost_microusd": cost_microusd,
                 "executed_actions": executed_actions,
                 "budget_used": self.runtime.budgets.used,
                 "event_replay_hash": event_hash,

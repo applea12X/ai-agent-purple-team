@@ -438,3 +438,23 @@ def test_the_same_run_under_the_default_cap_is_not_stopped(
     assert all(call["cost_microusd"] == 200 for call in calls)
     assert not any("budget exhausted" in json.dumps(event) for event in events)
     assert "FAILED" not in result.output, result.output
+
+
+def test_a_priced_runs_cost_reaches_the_summary_and_the_repetition_record(
+    tmp_path: Path, stub_model: Any, read_events: Events
+) -> None:
+    """Defect found here: ``RunSummary.cost_microusd`` was never set, so every repetition
+    record said zero even when the ledger had charged a priced pin. It is now read from the
+    same evidence as ``tokens_used``."""
+    stub_model.prompt_tokens = 1000
+    stub_model.completion_tokens = 1000
+    out = tmp_path / "costed"
+    run(str(out), *priced())
+    bundle = out / SCENARIO.stem
+    charged = sum(call["cost_microusd"] for call in model_calls(read_events(bundle)))
+    assert charged > 0
+    summary = json.loads((bundle / "summary.json").read_text())
+    assert summary["cost_microusd"] == charged
+    assert summary["budget_used"]["cost_microusd"] == charged
+    (record,) = json.loads((out / "stochastic.json").read_text())["repetitions"]["records"]
+    assert record["cost_microusd"] == charged
