@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from ipaddress import IPv4Address
 from pathlib import Path
 
+from purpleloop.reporting.phase5_references import phase5_schema_digests
 from purpleloop.schemas.action import SideEffectClass
 from purpleloop.schemas.authorization import (
     AssetScope,
@@ -40,6 +41,7 @@ from purpleloop.schemas.phase1 import (
 )
 from purpleloop.schemas.phase2 import OwnershipScope, Phase2Grants
 from purpleloop.schemas.phase3 import (
+    AdvisoryVerdictError,
     AgentTask,
     DecodingParameters,
     ModelPin,
@@ -63,6 +65,28 @@ from purpleloop.scoring.phase4 import PREREGISTERED_ALPHA, compare_risk_classes
 GUARD_KINDS = frozenset({EventKind.ADMISSION, EventKind.POLICY, EventKind.BUDGET})
 
 
+class GateInputError(AdvisoryVerdictError):
+    """A value of a type no gate reads reached a gate.
+
+    The gate boundary is typed, and the types are checked at run time rather than trusted to
+    annotations: a matrix cell, a defense-dependence classification, or a human adjudication
+    record is structurally not a gate input, and is refused before any arithmetic happens --
+    even where it would otherwise have duck-typed its way through. A subclass of
+    :class:`AdvisoryVerdictError`, so every caller that already refuses advisory input refuses
+    these too.
+    """
+
+
+def require_gate_input(expected: type, *items: object) -> None:
+    """Refuse any item that is not an instance of the gate's declared input type."""
+    for item in items:
+        if not isinstance(item, expected):
+            raise GateInputError(
+                f"{type(item).__name__} is not a gate input; this gate reads "
+                f"{expected.__name__} only"
+            )
+
+
 def scope_gate(events: Sequence[EvidenceEvent]) -> GateDecision:
     """Block on any executed result whose action was not affirmatively permitted.
 
@@ -71,6 +95,7 @@ def scope_gate(events: Sequence[EvidenceEvent]) -> GateDecision:
     digest, and no guard denial for that digest may be the latest guard decision before it.
     A permit-less execution, or an execution after a standing denial, is a scope bypass.
     """
+    require_gate_input(EvidenceEvent, *events)
     if not events:
         return GateDecision(
             gate="scope-bypass",
@@ -120,6 +145,9 @@ def budget_gate(
     ``RESULT`` permit may follow a ``BUDGET`` denial for the same action digest. A breach that
     is recorded as a budget outcome and stops the run is correct behaviour, not a violation.
     """
+    require_gate_input(EvidenceEvent, *events)
+    require_gate_input(BudgetLimits, limits)
+    require_gate_input(RunSummary, *summaries)
     violations: list[str] = []
     for summary in summaries:
         used = summary.budget_used
@@ -168,6 +196,8 @@ def critical_regression_gate(
     suite that just ran. A covered test missing from the report blocks: "the test did not run"
     and "the test passed" are different facts.
     """
+    require_gate_input(RegressionRegistry, registry)
+    require_gate_input(bool, *outcomes.values())
     covered = registry.covered()
     failed = [entry.finding_class for entry in covered if outcomes.get(entry.test) is False]
     missing = [entry.finding_class for entry in covered if entry.test not in outcomes]
@@ -201,6 +231,7 @@ def schema_drift_gate(baseline: Mapping[str, str], observed: Mapping[str, str]) 
     schema's canonical surface changes. New reference names also block, forcing a deliberate,
     reviewed baseline-bump commit rather than a silent widening.
     """
+    require_gate_input(str, *baseline.values(), *observed.values())
     drifted = sorted(
         name for name in baseline if name in observed and observed[name] != baseline[name]
     )
@@ -235,6 +266,8 @@ def risk_class_gate(
     alpha: float = PREREGISTERED_ALPHA,
 ) -> GateDecision:
     """Block on the pre-registered per-risk-class regression test (scoring.phase4)."""
+    require_gate_input(RiskClassBaseline, baseline)
+    require_gate_input(RiskClassMetrics, *current)
     comparisons = compare_risk_classes(baseline, current, alpha=alpha)
     blocked = [item for item in comparisons if item.blocked]
     if blocked:
@@ -508,6 +541,7 @@ def schema_digests() -> dict[str, str]:
         "run-summary-1.3": _reference_summary().digest(),
         "run-attestation-1.0": _reference_attestation().attestation_digest(),
         "evidence-event-1.1": _reference_event().digest(exclude={"event_hash"}),
+        **phase5_schema_digests(_reference_manifest("1.4.0"), _reference_scenario()),
     }
 
 
@@ -523,6 +557,7 @@ def all_gates(
     risk_current: Sequence[RiskClassMetrics],
 ) -> tuple[GateDecision, ...]:
     """All five gates over prepared inputs. Summaries carrying verdicts are checked binding."""
+    require_gate_input(RunSummary, *summaries)
     for summary in summaries:
         require_binding(*summary.findings)
         if summary.baseline is not None:
