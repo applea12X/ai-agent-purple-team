@@ -41,6 +41,7 @@ jobs:
           uv run purpleloop gates "$(ls -d artifacts/smoke/*/ | tail -1)" \
             --junit artifacts/junit.xml \
             --risk-current artifacts/corpus-current.json \
+            --inject schema-drift \
             --output artifacts/gates.json
       - uses: actions/upload-artifact@v4
         if: always()
