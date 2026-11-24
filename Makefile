@@ -101,3 +101,19 @@ release-check: holdout-check
 phase5-check: lint typecheck
 	uv run pytest tests/phase5 --no-cov
 	uv run purpleloop phase5-contracts
+
+# Phase 5 model plane (WP5.0). The commands read every knob from the environment themselves, so
+# make passes them through unchanged -- to agent-stochastic as well:
+#   PURPLELOOP_MODEL_{ID,VERSION,TEMPERATURE,TOP_P,SEED,MAX_OUTPUT_TOKENS,SEED_POLICY}
+#   PURPLELOOP_MODEL_{PRICE_INPUT,PRICE_OUTPUT}_MICROUSD_PER_1K, PURPLELOOP_MODEL_COST_BUDGET_MICROUSD
+#   PURPLELOOP_MODEL_{ENDPOINT,PROFILE,REPETITIONS,SUITE_COST_BUDGET_MICROUSD} (agent-corpus)
+#   PURPLELOOP_JUDGE_{ENDPOINT,PROFILE,MODEL_ID,MODEL_VERSION,TEMPERATURE,SEED,...} (judge)
+# A hosted (openai-compatible) profile refuses to run without a declared price.
+.PHONY: agent-corpus-stochastic judge-report-networked
+agent-corpus-stochastic:
+	uv run purpleloop agent-corpus --output-dir artifacts/agent-corpus
+
+judge-report-networked:
+	uv run purpleloop judge-report --output-dir artifacts/judge-networked \
+		--judge-endpoint "$$PURPLELOOP_JUDGE_ENDPOINT" \
+		--judge-profile "$${PURPLELOOP_JUDGE_PROFILE:-openai-compatible}"

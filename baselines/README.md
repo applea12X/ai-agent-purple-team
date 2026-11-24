@@ -18,3 +18,10 @@ side effect of a run.
   test in `docs/evaluation-methodology.md` (absolute floor on lost seeded findings; Fisher's
   exact at alpha = 0.05 otherwise). To bump after deliberate corpus growth, re-run
   `uv run purpleloop corpus-baseline` and commit the diff with the change that motivated it.
+
+- `model-calibration/<profile>-<model_id>-<version>.json` — per-pin token expectations
+  (WP5.0.3), written once by `purpleloop calibrate-pin <bundles>` from a measured real-model
+  run's `MODEL_CALLED` records and then held fixed. The networked path loads the file matching
+  the pin's identity; one recorded under a different system prompt hash is refused, not applied.
+  `purpleloop calibration-check` reports later runs against it (±10%) whether they pass or miss.
+  None is committed until a real run has produced one.
