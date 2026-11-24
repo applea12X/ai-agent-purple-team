@@ -195,12 +195,26 @@ def critical_regression_gate(
     ``outcomes`` maps pytest node ids to pass/fail, usually parsed from a JUnit report of the
     suite that just ran. A covered test missing from the report blocks: "the test did not run"
     and "the test passed" are different facts.
+
+    An entry may name more than one pinning test (its per-scenario node id and, since
+    WP5.0.10, the corpus-level test that also exercises it). Every one of them that appears in
+    the report must have passed; at least one must appear. So a per-scenario failure names
+    exactly its own finding, a corpus-test failure still blocks every finding it pins, and a
+    lane that ran only one granularity is judged on the tests it did run.
     """
     require_gate_input(RegressionRegistry, registry)
     require_gate_input(bool, *outcomes.values())
     covered = registry.covered()
-    failed = [entry.finding_class for entry in covered if outcomes.get(entry.test) is False]
-    missing = [entry.finding_class for entry in covered if entry.test not in outcomes]
+    failed = [
+        entry.finding_class
+        for entry in covered
+        if any(outcomes.get(test) is False for test in entry.pinning_tests())
+    ]
+    missing = [
+        entry.finding_class
+        for entry in covered
+        if not any(test in outcomes for test in entry.pinning_tests())
+    ]
     if failed:
         return GateDecision(
             gate="critical-regression",

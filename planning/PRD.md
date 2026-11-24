@@ -126,6 +126,12 @@ No imported framework owns the canonical scenario or result schema.
 - `tests/`: unit, property, contract, integration, replay, fault-injection, and end-to-end suites.
 - `.github/workflows/`: deterministic PR lane and optional scheduled real-model lane.
 
+As built (reconciled in `docs/phase5/loose-ends.md`): the `supportlab` application, seed data,
+agent, tools, and defenses live in `src/purpleloop/fixture/supportlab/`, and `targets/supportlab/`
+holds only the container build context and migrations. Execution is sequential in topological
+order, so there is no separate scheduler module. `control/` has no approvals module yet (WP5.1),
+and `reporting/` writes no Parquet yet (WP5.3).
+
 ## 6. Canonical data contracts
 
 ### Authorization manifest
@@ -347,7 +353,12 @@ Debt carried out of Phase 1, to be cleared in WP2.0:
 - Section 5 of this document lists `docs/prd.md` and `policies/`, neither of which exists in the
   tree.
 
-### Phase 2 — Realistic SaaS and browser lane
+### Phase 2 — Realistic SaaS and browser lane — complete (`03f05e2`, 2026-09-07)
+
+The measured results are in `docs/phase2-acceptance.md`; the implemented design is in
+`docs/phase2-plan.md`. The supportlab seeded-recall and false-positive checkpoint below was
+asserted by the corpus test but not written into that record; it is recorded in
+`docs/phase5/loose-ends.md` (18 of 18, 0 false positives).
 
 #### Objective and verified starting point
 
@@ -597,12 +608,14 @@ this section carries below.
 Checkpoint — measured:
 
 - 435 tests pass with 3 gated skips, 88.73% branch coverage; the Phase 0/1, 2, and 3 suites pass
-  unchanged. One further test was added after that run and passed on its own.
+  unchanged. Tests added after that run (five in the follow-up commits, more with WP4.0.1) were
+  first measured together by WP5.0.1: 472 passed, 3 skipped, 89.40%, at `ab66ab0`.
 - The five enforcing gates pass over the smoke bundle, and each of the five gate classes blocks
   alone, with its intended reason, when a violation is injected through the same command CI
   runs. CI-observed red branches have **not** been pushed.
 - Regression coverage for accepted findings: 48 of 48 (1.0), from the registry, at corpus-test
-  granularity.
+  granularity. Since WP5.0.10, each finding has its own per-scenario pinning test
+  (`docs/phase5/wp5.0.10-acceptance.md`).
 - Smoke lane: 14 of 14 across all three lanes in 11.72 s against a 600 s target. Holdout: 17 of
   17 near-miss mutations denied, base action permitted.
 - WP4.0.7 closed: the agent corpus passes 25 of 25 on the compose fixture, agreeing with in-process
@@ -611,10 +624,12 @@ Checkpoint — measured:
   and decided verdicts. The corrected executed-unauthorized-side-effects figure is mean 0.96
   (previously published as 2.96).
 
-**Open:** everything that needs a real model endpoint (a real stochastic run, real API cost, a real
-judge, the compromised-model property against a real model), the CI-observed red-branch runs,
-precision on a human-adjudicated sample, and the independent-reviewer session. Each is recorded
-as not yet run, not as met.
+**Open:** everything that needs a real model endpoint beyond the single local, temperature-0,
+one-scenario run of WP4.0.1 (a sampled run over the corpus, real API cost, a real judge, the
+compromised-model property against a real model), the CI-observed red-branch runs, precision on
+a human-adjudicated sample, and the independent-reviewer session. Each is recorded as not yet
+run, not as met, and each is owned by a WP5.0 row (`docs/phase5/loose-ends.md`). The recorded
+demo (WP4.5.3) is closed by WP5.0.11.
 
 #### WP4.0 — Debt carried out of Phase 3
 

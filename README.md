@@ -11,8 +11,11 @@ controls. Phase 1 builds a deterministic closed-loop evaluation on top of that k
 > asset covered by a current, signed authorization manifest. Writes are permitted only for exact
 > registered synthetic fixture operations that a 1.1 manifest explicitly grants. Destructive
 > actions, unknown operations, and targets outside signed scope are always denied. There is no
-> production or live-model adapter, and the browser adapter drives only the bundled
-> synthetic fixture; all model responses come from offline fixtures.
+> production adapter, and the browser adapter drives only the bundled synthetic fixture. By
+> default, and in every PR lane, all model responses come from offline fixtures. A live model is
+> reached only through the opt-in stochastic lane, at an exact model origin that the signed
+> manifest grants and that can never coincide with a target asset
+> ([ADR 0008](docs/adr/0008-model-plane-separate-from-target-plane.md)).
 
 ## Setup and verification
 
@@ -106,6 +109,14 @@ uv run purpleloop verify-bundle out/agent-run --attestation
 uv run purpleloop audit-export out/agent-run out/audit.json
 ```
 
+A terminal recording of the one-command demo (`purpleloop smoke-demo`, 14 of 14 passing) followed
+by fail-closed cases (an expired manifest refused with `EXPIRED_MANIFEST`, 17 of 17
+scope-widening mutations denied by `holdout-check`, and the evaluator-injection report) is in
+[docs/demo/phase-demo.cast](docs/demo/phase-demo.cast). Play it with `asciinema play
+docs/demo/phase-demo.cast` or load it in
+[asciinema-player](https://docs.asciinema.org/manual/player/). It was made by
+`scripts/record_demo.py` from commands actually run, and it is not edited.
+
 Fixed sample artifact sets for reviewers — a passing attested run, an admission-denied run,
 and a labelled evidence-integrity incident — live in [docs/samples](docs/samples), with the
 timed walkthrough protocol in [docs/reviewer-walkthrough.md](docs/reviewer-walkthrough.md).
@@ -113,6 +124,31 @@ timed walkthrough protocol in [docs/reviewer-walkthrough.md](docs/reviewer-walkt
 Building the fixture image pulls `python:3.12-slim` and `ghcr.io/astral-sh/uv` from public
 registries, so the first `phase1-demo` needs network access. Evaluation itself is fully offline
 and needs no cloud credentials.
+
+## Results so far
+
+Every figure below comes from the acceptance record it cites. The record states how it was
+measured and what it does not show. Unless a row says otherwise, the figures describe the
+bundled synthetic fixtures and the offline scripted model only. **A passing run is not evidence
+that a target or a model is secure.**
+
+| Measure | Result | Source |
+| --- | --- | --- |
+| Corpus | 48 labelled scenarios: 5 `phase1`, 18 `supportlab`, 25 `agent` | [Phase 3](docs/phase3-acceptance.md) |
+| Seeded recall / false positives | 1.0 / 0 in every lane, from explicit ground-truth labels (supportlab: 18 of 18, first written down in the loose-ends audit) | [Phase 1](docs/phase1-acceptance.md), [Phase 3](docs/phase3-acceptance.md), [loose ends](docs/phase5/loose-ends.md) |
+| Deterministic replay | 229 of 229 trials matched across the three lanes | [Phase 4](docs/phase4-acceptance.md) |
+| Kill switch | p99 0.654 ms over 1,000 trials (cooperative in-process cancellation only) | [Phase 0](docs/phase0-acceptance.md) |
+| Smoke demo | 14 of 14 in 12.131 s against a 600 s target (the recorded run) | [WP5.0.11](docs/phase5/wp5.0.11-acceptance.md) |
+| Scope-widening holdout | 17 of 17 near-miss mutations denied, base action permitted | [Phase 4](docs/phase4-acceptance.md) |
+| Captured model | 0 out-of-scope actions across 25 scenarios with a hostile stand-in model | [Phase 3](docs/phase3-acceptance.md) |
+| Evaluator injection | resistance 1.000 (n=24) for the scripted judge; 0.583 with delimiting removed | [Phase 3](docs/phase3-acceptance.md) |
+| First real model | `qwen2.5:7b-instruct` (local, temperature 0) on one scenario: the prompt-only defense failed 5 of 5; after enforcing provenance at the email sink it held 5 of 5 | [Phase 4, WP4.0.1](docs/phase4-acceptance.md) |
+| Suite | 472 passed, 3 gated skips, 89.40% branch coverage at `ab66ab0` | [WP5.0.1](docs/phase5/wp5.0.1-acceptance.md) |
+
+**Not yet measured:** a real API cost, a real judge, variance under sampling on a real model, the
+other 24 agent scenarios on a real model, gates observed failing in CI, precision on a
+human-adjudicated sample, and an independent reviewer session.
+[docs/phase5/loose-ends.md](docs/phase5/loose-ends.md) lists every such item and who owns it.
 
 ## CLI
 
@@ -218,16 +254,18 @@ which runs have actually happened.
 ## Documentation
 
 - [Product requirements and delivery plan](planning/PRD.md) and the
-  [Phase 2](planning/phase2-plan.md), [Phase 3](planning/phase3-plan.md), and
-  [Phase 4](planning/phase4-plan.md) plans
+  [Phase 2](planning/phase2-plan.md), [Phase 3](planning/phase3-plan.md),
+  [Phase 4](planning/phase4-plan.md), [Phase 5](planning/phase5-plan.md), and
+  [Phase 6](planning/phase6-agents-plan.md) plans
 - [Architecture](docs/architecture.md) and [threat model](docs/threat-model.md)
 - [Rules of engagement](docs/rules-of-engagement.md)
 - Designs: [Phase 1](docs/phase1-plan.md), [Phase 2](docs/phase2-plan.md),
   [Phase 3](docs/phase3-plan.md), [Phase 4](docs/phase4-plan.md), and the
   [evaluation methodology](docs/evaluation-methodology.md)
 - Acceptance records: [Phase 0](docs/phase0-acceptance.md), [Phase 1](docs/phase1-acceptance.md),
-  [Phase 2](docs/phase2-acceptance.md), [Phase 3](docs/phase3-acceptance.md), and
-  [Phase 4](docs/phase4-acceptance.md)
+  [Phase 2](docs/phase2-acceptance.md), [Phase 3](docs/phase3-acceptance.md),
+  [Phase 4](docs/phase4-acceptance.md), and the Phase 5 work-package notes in
+  [docs/phase5](docs/phase5), including the [loose-ends audit](docs/phase5/loose-ends.md)
 - Operations: [retention policy](docs/retention-policy.md),
   [incident runbook](docs/incident-runbook.md),
   [reviewer walkthrough](docs/reviewer-walkthrough.md), and the

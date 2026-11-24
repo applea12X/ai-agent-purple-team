@@ -149,6 +149,7 @@ the embedded manifests and keys, and instructions for verifying each digest.
 
 **What Phase 4's offline numbers are not.** Everything above is measured with the offline
 scripted provider unless the acceptance record says otherwise. The nightly lane exists to make
-the model-facing numbers real; until it has run against a real pinned endpoint, no Phase 3 or
-Phase 4 figure is evidence about any real model's behaviour or cost, and the acceptance record
-says which runs have actually happened.
+the model-facing numbers real. A real pinned endpoint has been used once, locally: one scenario on
+`qwen2.5:7b-instruct` at temperature 0 (WP4.0.1). No other Phase 3 or Phase 4 figure is evidence
+about any real model's behaviour or cost, and the acceptance record says which runs have actually
+happened.

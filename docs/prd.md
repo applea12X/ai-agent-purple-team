@@ -6,9 +6,14 @@ resolves that path to the canonical location rather than duplicating the content
 never drift.
 
 - Product requirements and phased plan: [planning/PRD.md](../planning/PRD.md)
-- Phase 2 working plan: [planning/phase2-plan.md](../planning/phase2-plan.md)
+- Working plans: [Phase 2](../planning/phase2-plan.md), [Phase 3](../planning/phase3-plan.md),
+  [Phase 4](../planning/phase4-plan.md), [Phase 5](../planning/phase5-plan.md),
+  [Phase 6](../planning/phase6-agents-plan.md)
 - Architecture and trust boundaries: [architecture.md](architecture.md)
 - Threat model: [threat-model.md](threat-model.md)
 - Rules of engagement: [rules-of-engagement.md](rules-of-engagement.md)
 - Evaluation methodology: [evaluation-methodology.md](evaluation-methodology.md)
-- Acceptance records: [Phase 0](phase0-acceptance.md), [Phase 1](phase1-acceptance.md), [Phase 2](phase2-acceptance.md)
+- Acceptance records: [Phase 0](phase0-acceptance.md), [Phase 1](phase1-acceptance.md),
+  [Phase 2](phase2-acceptance.md), [Phase 3](phase3-acceptance.md), [Phase 4](phase4-acceptance.md),
+  and the Phase 5 work-package notes in [phase5/](phase5/), indexed by the
+  [loose-ends audit](phase5/loose-ends.md)

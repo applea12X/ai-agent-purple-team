@@ -25,3 +25,10 @@ side effect of a run.
   the pin's identity; one recorded under a different system prompt hash is refused, not applied.
   `purpleloop calibration-check` reports later runs against it (±10%) whether they pass or miss.
   None is committed until a real run has produced one.
+
+- `regression-outcomes.json` (Phase 5, WP5.0.10) — the recorded outcome of each of the 48
+  corpus scenarios: status, verdicts, finding count, and the run-independent `oracle_hash`.
+  Each per-scenario pinning test (`tests/phase5/test_regression_pinning.py::
+  test_pinned_finding[<scenario_id>]`, the node ids the regression registry names) asserts its
+  run reproduces its row. To re-pin after a deliberate fixture or oracle change, run
+  `uv run python scripts/repin_regression_outcomes.py` and commit the diff with that change.
