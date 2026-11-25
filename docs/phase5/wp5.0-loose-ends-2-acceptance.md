@@ -180,11 +180,30 @@ Commands and results, at the final commit:
   files).
 - `uv run pytest -q --no-cov tests/phase5`: **306 passed, 1 skipped** in 121.99 s. The skip is
   the Playwright live test, gated on `PURPLELOOP_CONTAINER_TESTS=1`.
-- `uv run pytest -q -x --no-cov tests/phase4 tests/phase3`: see "Full suite" below.
+- `uv run pytest -q -x --no-cov tests/phase4 tests/phase3` was started and then stopped before
+  it finished, in favour of the full suite below, which contains both directories.
 
 ## Full suite
 
-Recorded below when run.
+Two runs on AC power (`pmset -g batt`: "Now drawing from 'AC Power'"), each with
+`caffeinate -i -s /usr/bin/time -l uv run pytest --junitxml=artifacts/junit-loose-ends-2.xml`
+on a clean tree:
+
+| Run | Tree | Result | Branch coverage | Time (pytest / real) |
+| --- | --- | --- | --- | --- |
+| before merging phase-5 | `2621d7c` | **778 passed, 4 skipped**, 0 failed | **91.52%** | 1,150.70 s / 1,153.02 s |
+| final | `024b454` (merged with phase-5 `80db489`) | **884 passed, 4 skipped**, 0 failed; JUnit `tests=888 failures=0 errors=0 skipped=4` | **91.78%** (floor 85%) | 1,176.71 s / 1,178.61 s |
+
+The four skips are the three container- and PostgreSQL-gated tests that WP5.0.1 already
+recorded, plus this branch's live Playwright test, which is gated on
+`PURPLELOOP_CONTAINER_TESTS=1`. The final run's two warnings are third-party deprecation
+warnings from `starlette.testclient`. Pytest time and real time agree within 2 s, so both runs
+were uninterrupted. The final run took 2026-11-25 17:49:29Z–18:09:07Z.
+
+**Merge note.** At `80db489`, `.github/workflows/phase5.yml` was itself mis-merged: the
+`review` job had no `runs-on` or `steps`, and its steps sat inside `benchmark-subset`. When YAML
+parses that file, `jobs.review` is `None`. The merge commit `024b454` restores both jobs and adds
+this branch's `nightly` job.
 
 ## What this does not show
 
