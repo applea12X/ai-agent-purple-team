@@ -320,6 +320,11 @@ class MatrixRow(StrictModel):
     pin: ModelPin
     seeds: tuple[int, ...] = Field(min_length=1)
     decoding_label: DecodingLabel
+    #: Declared wall time per model call, for the pre-flight wall-time estimate (WP5.2). Signed
+    #: with the spec so the time a run may take is authority, like its cost. The pre-flight
+    #: refuses a real pin without one rather than estimating its time as zero; an anchor row
+    #: runs in process and leaves it unset. Absent, it adds nothing to the canonical bytes.
+    expected_seconds_per_call: float | None = Field(default=None, gt=0.0, le=3600.0)
 
     @field_validator("row_id")
     @classmethod
@@ -370,6 +375,13 @@ class EvaluationMatrix(SignedRecord):
     scenario_ids: frozenset[str] = Field(min_length=1)
     repetitions: int = Field(ge=5, le=100)
     cost_cap_microusd: int = Field(ge=0, le=1_000_000_000)
+    #: The pre-flight wall-time cap (WP5.2), checked beside the cost cap before the first call.
+    #: Optional so the 1.0 reference document keeps its canonical bytes; the pre-flight refuses
+    #: a spec with a real-pin row and no cap.
+    wall_time_cap_seconds: int | None = Field(default=None, ge=1, le=30 * 24 * 3600)
+    #: Why ``scenario_ids`` is the subset it is, when it is one (plan open question 4): the cut
+    #: is written into the signed spec, never applied after a run.
+    subset_rationale: str | None = Field(default=None, min_length=1, max_length=2000)
     alpha: float = Field(gt=0.0, lt=1.0)
     contrast_family: ContrastFamily = "each-defense-vs-baseline"
     contrast_test: Literal["mcnemar-exact"] = "mcnemar-exact"

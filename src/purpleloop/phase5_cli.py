@@ -16,6 +16,10 @@ from purpleloop.schemas.phase5 import CONTRACT_VERSIONS
 
 
 def register(app: typer.Typer) -> None:
+    from purpleloop.matrix_cli import register as register_matrix
+
+    register_matrix(app)  # WP5.2: matrix-sign, matrix-run, matrix-report
+
     @app.command("phase5-contracts")
     def phase5_contracts(as_json: bool = typer.Option(False, "--json")) -> None:
         """Print every Phase 5 contract and the version this code implements."""
