@@ -3,6 +3,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    # The Phase 5 nightly lane (loose ends 4.23-4.25). Offset from phase4.yml's 03:41 nightly.
+    - cron: "17 4 * * *"
   workflow_dispatch:
 permissions:
   contents: read
@@ -35,4 +38,51 @@ jobs:
         if: always()
         with:
           name: phase5-contracts-evidence
+          path: artifacts/
+
+  # Loose ends 4.23-4.25 — the nightly lane. Its scenario subset and repetition count are read
+  # from the signed nightly manifest (scenarios/nightly/, Manifest 1.4 nightly_scope), never from
+  # this file: changing the nightly is a re-signed manifest. It runs the shared API/browser
+  # workflow on real Chromium every night, and the agent scenarios against the configured
+  # endpoint; with no endpoint those are a recorded skip-no-credential. Any other non-pass
+  # outcome files or updates one tracking issue. Only this job may write issues.
+  nightly:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      issues: write
+    env:
+      PURPLELOOP_MODEL_API_KEY: ${{ secrets.PURPLELOOP_MODEL_API_KEY }}
+      PURPLELOOP_MODEL_ENDPOINT: ${{ vars.PURPLELOOP_MODEL_ENDPOINT }}
+      PURPLELOOP_MODEL_ID: ${{ vars.PURPLELOOP_MODEL_ID }}
+      PURPLELOOP_MODEL_PROFILE: ${{ vars.PURPLELOOP_MODEL_PROFILE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      # Pinned runner: Playwright 1.58.0 has no Chromium build for ubuntu-latest (26.04).
+      - run: uv run playwright install --with-deps chromium
+      - name: Verify the signed nightly scope
+        id: scope
+        run: uv run purpleloop nightly-scope --github-output "$GITHUB_OUTPUT"
+      - name: Nightly lane (signed scope; browser workflow and agent scenarios)
+        run: uv run purpleloop nightly-lane --output-dir artifacts/nightly
+      - name: Classified outcomes
+        if: ${{ !cancelled() }}
+        run: cat artifacts/nightly/nightly.json || echo "no classified outcome was recorded"
+      - name: File or update the tracking issue on a non-pass night
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          uv run purpleloop nightly-issue --output-dir artifacts/nightly \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase5-nightly-evidence
           path: artifacts/

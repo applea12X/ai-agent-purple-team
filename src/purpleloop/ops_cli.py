@@ -1,6 +1,8 @@
 """Operational commands closing Phase 0-4 loose ends (docs/phase5/loose-ends.md).
 
 * ``browser-estop`` measures the browser lane's emergency-stop latency (row 2.4).
+* ``nightly-scope``, ``nightly-scope-sign``, ``nightly-lane``, and ``nightly-issue`` are the
+  nightly lane's scope reader, scope signer, runner, and tracking-issue filer (rows 4.23-4.25).
 """
 
 from __future__ import annotations
@@ -12,7 +14,23 @@ from typing import Annotated
 
 import typer
 
+from purpleloop.control.manifest import ManifestError
 from purpleloop.reporting.bundle import write_json
+from purpleloop.runtime.nightly import (
+    NIGHTLY_DIR,
+    NIGHTLY_MANIFEST,
+    NIGHTLY_PUBLIC_KEY,
+    REPORT_NAME,
+    ScopedScenario,
+    build_nightly_manifest,
+    file_or_update_issue,
+    gh_runner,
+    public_pem,
+    read_nightly_scope,
+    render_issue_body,
+    resolve_scenario,
+)
+from purpleloop.schemas.phase4 import NightlyScope, StochasticRunOutcome
 
 
 def register(app: typer.Typer) -> None:
@@ -55,3 +73,129 @@ def register(app: typer.Typer) -> None:
             "within_ceiling"
         ):
             raise typer.Exit(1)
+
+    @app.command("nightly-scope")
+    def nightly_scope(
+        manifest: Path = NIGHTLY_MANIFEST,
+        public_key: Path = NIGHTLY_PUBLIC_KEY,
+        github_output: Annotated[
+            Path | None, typer.Option(help="Append scope outputs here ($GITHUB_OUTPUT)")
+        ] = None,
+    ) -> None:
+        """Verify the signed nightly manifest and print its scope. Exit 1 if there is none."""
+        try:
+            plan = read_nightly_scope(manifest, public_key)
+        except (ManifestError, ValueError, OSError) as exc:
+            reason = str(getattr(exc, "reason_code", "") or "NIGHTLY_SCOPE_INVALID")
+            typer.echo(f"INVALID: {reason}: {exc}", err=True)
+            raise typer.Exit(1) from None
+        typer.echo(json.dumps(plan.as_json(), sort_keys=True))
+        if github_output is not None:
+            with github_output.open("a", encoding="utf-8") as handle:
+                handle.write(f"repetitions={plan.repetitions}\n")
+                handle.write(f"manifest_digest={plan.manifest_digest}\n")
+                for lane in ("agent", "supportlab"):
+                    ids = " ".join(item.scenario_id for item in plan.lane(lane))
+                    handle.write(f"{lane}_scenarios={ids}\n")
+
+    @app.command("nightly-scope-sign")
+    def nightly_scope_sign(
+        scenario: Annotated[list[str], typer.Option(help="Scenario id in scope (repeatable)")],
+        repetitions: int = 5,
+        rotation: str = "",
+        valid_days: int = 365,
+        output_dir: Path = NIGHTLY_DIR,
+        key_path: Annotated[
+            Path | None, typer.Option(help="Ed25519 private key PEM; omitted, an ephemeral key")
+        ] = None,
+    ) -> None:
+        """Sign a nightly scope. Without --key-path the private key is generated and discarded."""
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+        try:
+            scope = NightlyScope(
+                scenario_ids=frozenset(scenario), repetitions=repetitions, rotation=rotation
+            )
+            for item in sorted(scope.scenario_ids):
+                resolve_scenario(item)
+            if key_path is None:
+                key = Ed25519PrivateKey.generate()
+            else:
+                loaded = load_pem_private_key(key_path.read_bytes(), password=None)
+                if not isinstance(loaded, Ed25519PrivateKey):
+                    raise ValueError("the signing key is not Ed25519")
+                key = loaded
+            signed = build_nightly_manifest(key, scope, valid_days=valid_days)
+        except (ValueError, OSError) as exc:
+            typer.echo(f"INVALID: {exc}", err=True)
+            raise typer.Exit(1) from None
+        output_dir.mkdir(parents=True, exist_ok=True)
+        write_json(output_dir / "manifest.json", signed.model_dump(mode="json"))
+        (output_dir / "authorization-public.pem").write_bytes(public_pem(key))
+        typer.echo(
+            f"SIGNED {signed.manifest_digest()} valid_until={signed.valid_until.isoformat()}"
+            + (" (ephemeral key, discarded)" if key_path is None else "")
+        )
+
+    @app.command("nightly-lane")
+    def nightly_lane(
+        output_dir: Path = Path("artifacts/nightly"),
+        manifest: Path = NIGHTLY_MANIFEST,
+        public_key: Path = NIGHTLY_PUBLIC_KEY,
+        endpoint: Annotated[str | None, typer.Option(envvar="PURPLELOOP_MODEL_ENDPOINT")] = None,
+        profile: Annotated[
+            str, typer.Option(envvar="PURPLELOOP_MODEL_PROFILE")
+        ] = "openai-compatible",
+        browser_fixture: Annotated[
+            str, typer.Option(help="served (real Chromium) or in-process")
+        ] = "served",
+    ) -> None:
+        """Run the signed nightly scope; write nightly.json. Exit 1 on any non-pass outcome."""
+        from purpleloop.runtime.nightly import run_browser_workflow, run_night
+
+        served = browser_fixture == "served"
+
+        async def browser(item: ScopedScenario, output: Path) -> StochasticRunOutcome:
+            return await run_browser_workflow(item, output, served=served)
+
+        report = asyncio.run(
+            run_night(
+                output_dir,
+                manifest_path=manifest,
+                public_key_path=public_key,
+                endpoint=endpoint or None,
+                profile=profile,
+                browser_executor=browser,
+            )
+        )
+        for item in report["outcomes"]:
+            typer.echo(
+                f"{item.get('scenario_id') or 'scope'} [{item.get('lane') or '-'}]: "
+                f"{item['outcome']} {item['reason_code']}"
+            )
+        if report["needs_issue"]:
+            raise typer.Exit(1)
+
+    @app.command("nightly-issue")
+    def nightly_issue(
+        output_dir: Path = Path("artifacts/nightly"),
+        run_url: Annotated[str, typer.Option(help="The workflow run's URL")] = "",
+        gh: Annotated[str, typer.Option(help="The gh executable")] = "gh",
+        dry_run: bool = False,
+    ) -> None:
+        """File or update the nightly tracking issue when the night was not a pass."""
+        report_path = output_dir / REPORT_NAME
+        report = json.loads(report_path.read_text()) if report_path.is_file() else None
+        if report is not None and not report["needs_issue"]:
+            typer.echo("no issue: every outcome is pass or a recorded skip-no-credential")
+            return
+        body = render_issue_body(report, run_url=run_url or "(run URL not given)")
+        if dry_run:
+            typer.echo(body)
+            return
+        output_dir.mkdir(parents=True, exist_ok=True)
+        action, reference = file_or_update_issue(
+            body, run=gh_runner(gh), body_path=output_dir / "issue-body.md"
+        )
+        typer.echo(f"ISSUE {action} {reference}")
