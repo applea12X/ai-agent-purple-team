@@ -13,11 +13,13 @@ import json
 import typer
 
 from purpleloop import telemetry_cli
+from purpleloop.review import cli as review_cli
 from purpleloop.schemas.phase5 import CONTRACT_VERSIONS
 
 
 def register(app: typer.Typer) -> None:
     telemetry_cli.register(app)  # WP5.3 observe-suite, telemetry-*, analyze
+    review_cli.register(app)  # WP5.0.8 adjudicate/precision-report, WP5.4 review
 
     @app.command("phase5-contracts")
     def phase5_contracts(as_json: bool = typer.Option(False, "--json")) -> None:
@@ -27,3 +29,8 @@ def register(app: typer.Typer) -> None:
             return
         for name, version in CONTRACT_VERSIONS:
             typer.echo(f"{name} {version}")
+
+    # WP5.6: ``benchmark-promote`` and ``benchmark-run``.
+    from purpleloop.benchmark_cli import register as register_benchmark
+
+    register_benchmark(app)
