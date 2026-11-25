@@ -206,8 +206,20 @@ then every classification above is a **stand-in-only** classification.
 
 ## Tests and suite
 
-`tests/phase5/test_evaluation_matrix.py` — results and the full-suite counts are recorded in the
-section below.
+- `uv run pytest tests/phase5/test_evaluation_matrix.py --no-cov -q` gave **49 passed in 107.08 s**.
+  The fixture runs one real matrix (3 stand-ins plus a stub real pin on `httpx.MockTransport`,
+  3 scenarios × 5 repetitions, 60 trials). The tests check that all 60 bundles verify; that the stub
+  saw 90 requests, which is 6 per trial and equals the pre-flight's count; that the stub received
+  seeds 42–46 and temperature 0.7; and that real-pin cells are `pinned-stochastic` while stand-in
+  cells are `advisory`. They also check the measured subset classifications, the refusal of every
+  matrix output at the gate boundary, the absence of any composite score, and that `matrix-report`
+  recomputes the outputs and catches a tampered `trials.json`. The arithmetic tests pin values a
+  fake would get wrong: (5, 0) → p = 0.0625 two-sided, Holm × 24 across the family rather than × 8
+  per row, and 1 success in 5 collapsing to "did not hold".
+- The CI job's commands, run locally (`matrix-sign` → `matrix-run` → `matrix-report` on
+  `standins-ci-subset.draft.json`), exited 0: 45 trials, 0 excluded, **92.6 s against 68 s
+  estimated (+36%)**, and `VERIFIED`. On a hostile-heavy three-scenario sample the per-trial
+  constant underestimates. The full-corpus run landed within 3%.
 
 ## Defects found in earlier code
 
