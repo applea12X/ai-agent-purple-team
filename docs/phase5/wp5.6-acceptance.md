@@ -122,6 +122,8 @@ are scored by checks on state or responses. Every scenario declares `origin: aut
 | WP5.6 tests | `uv run pytest -q --no-cov tests/phase5/test_wp56_promotion.py` / `test_wp56_subset.py` / `test_wp56_isolation.py` | 29 / 14 / 7 passed |
 | Phase 5 suite | `uv run pytest tests/phase5 -q --no-cov` | **313 passed in 117.41 s** |
 | Lint and types | `uv run ruff check . && uv run ruff format --check . && uv run mypy` | all checks passed; 229 files formatted; mypy no issues in 95 source files |
+| Phase 3 and 4 regression sanity | `uv run pytest -q -x --no-cov tests/phase4 tests/phase3` | 301 passed, 1 skipped in 312.33 s |
+| Full suite | `/usr/bin/time -p uv run pytest --junitxml=artifacts/junit-wp5.6.xml` | **785 passed, 3 skipped in 1,337.02 s** (real 1,339.32 s); **91.69% branch coverage** (floor 85%) |
 
 ### Plan §6, row 5.6
 
