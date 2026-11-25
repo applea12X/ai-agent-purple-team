@@ -16,6 +16,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
+from pydantic import ValidationError
 
 from purpleloop.control.capabilities import (
     FIELD_CLASSIFICATION,
@@ -53,6 +54,7 @@ def base_data() -> dict[str, Any]:
 
 
 def build(*mutations: Mutation) -> AuthorizationManifest:
+    """Apply ``mutations`` to the base manifest. Raises if the schema refuses the result."""
     data = base_data()
     for mutation in mutations:
         mutation(data)
@@ -364,6 +366,20 @@ def test_the_union_is_the_smallest_surface_containing_each_input() -> None:
 
 # --- properties ----------------------------------------------------------------------------------
 
+
+def build_or_discard(*mutations: Mutation) -> AuthorizationManifest:
+    """Build a generated combination, discarding one the manifest schema itself refuses.
+
+    Some combinations are not manifests at all (subresource origins with no browser asset); the
+    schema refuses them before ``capability_delta`` could be asked, so they are not cases.
+    """
+    try:
+        return build(*mutations)
+    except ValidationError:
+        assume(False)
+        raise
+
+
 widening_names = st.sets(st.sampled_from(sorted(WIDENINGS)), min_size=1, max_size=5)
 narrowing_names = st.sets(st.sampled_from(sorted(NARROWINGS)), max_size=6)
 
@@ -381,7 +397,7 @@ SETTINGS = settings(max_examples=60, deadline=None, suppress_health_check=[Healt
 @SETTINGS
 @given(widening_names)
 def test_any_composed_widening_is_exactly_the_union_of_its_kinds(names: set[str]) -> None:
-    requested = build(*(WIDENINGS[name][1] for name in sorted(names)))
+    requested = build_or_discard(*(WIDENINGS[name][1] for name in sorted(names)))
     expected = frozenset(WIDENINGS[name][0] for name in names)
     delta = capability_delta(BASELINE, requested)
     assert delta and delta == expected
@@ -390,9 +406,9 @@ def test_any_composed_widening_is_exactly_the_union_of_its_kinds(names: set[str]
 @SETTINGS
 @given(narrowing_names)
 def test_any_composed_narrowing_needs_no_approval(names: set[str]) -> None:
-    assert capability_delta(BASELINE, build(*(NARROWINGS[name] for name in sorted(names)))) == (
-        frozenset()
-    )
+    assert capability_delta(
+        BASELINE, build_or_discard(*(NARROWINGS[name] for name in sorted(names)))
+    ) == (frozenset())
 
 
 @SETTINGS
@@ -400,7 +416,7 @@ def test_any_composed_narrowing_needs_no_approval(names: set[str]) -> None:
 def test_narrowing_elsewhere_never_hides_a_widening(widen: set[str], narrow: set[str]) -> None:
     # A cap lowered by one and then raised by one is the baseline cap again: not "elsewhere".
     assume(not any(SAME_CAP.get(name) in narrow for name in widen))
-    requested = build(
+    requested = build_or_discard(
         *(NARROWINGS[name] for name in sorted(narrow)),
         *(WIDENINGS[name][1] for name in sorted(widen)),
     )
@@ -410,7 +426,7 @@ def test_narrowing_elsewhere_never_hides_a_widening(widen: set[str], narrow: set
 @SETTINGS
 @given(widening_names, st.randoms(use_true_random=False))
 def test_the_delta_is_invariant_to_order_and_canonicalization(names: set[str], rng: Any) -> None:
-    requested = build(*(WIDENINGS[name][1] for name in sorted(names)))
+    requested = build_or_discard(*(WIDENINGS[name][1] for name in sorted(names)))
     data = requested.model_dump(mode="python", exclude_none=True)
     assets = list(data["assets"])
     rng.shuffle(assets)
