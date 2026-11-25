@@ -627,3 +627,26 @@ def test_the_markup_builder_refuses_dangerous_constructs() -> None:
     assert path("s", "../<x>", 1) == "/s/..%2F%3Cx%3E/1"
     assert html.unescape(str(el("pre", "‮"))) == "<pre>‮</pre>"
     assert re.fullmatch(r"<br>", el("br"))
+
+
+def test_the_three_reviewer_samples_open_in_the_ui(tmp_path: Path) -> None:
+    """The UI path of docs/reviewer-walkthrough.md: passing run, denied run, incident."""
+    samples = []
+    for name in ("passing-run", "denied-run", "incident"):
+        shutil.copytree(ROOT / "docs" / "samples" / name, tmp_path / name)
+        samples.append(load_source(tmp_path / name))
+    passing, denied, incident = samples
+    assert passing.verified and passing.kind == "run-bundle"
+    assert denied.kind == "ledger" and "hash chain verified" in denied.verification
+    assert not incident.verified and incident.runs == ()
+    session = client_for(samples, [tmp_path / f"r{i}" for i in range(3)], reviewer())
+    visit_everything(session, samples)
+    denied_page = session.get("/s/1/r/0")
+    assert "EXPIRED_MANIFEST" in denied_page and "Ledger only" in denied_page
+    assert "NOT VERIFIED" in session.get("/s/2")
+    tampered = tmp_path / "tampered"
+    shutil.copytree(ROOT / "docs" / "samples" / "denied-run", tampered)
+    ledger = tampered / "evidence.jsonl"
+    ledger.write_text(ledger.read_text().replace("EXPIRED_MANIFEST", "EXPIRED_MANIFESX"))
+    broken = load_source(tampered)
+    assert broken.runs == () and "FAILED to verify" in broken.verification

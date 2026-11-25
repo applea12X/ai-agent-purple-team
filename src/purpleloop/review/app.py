@@ -121,6 +121,13 @@ def _nav(*crumbs: tuple[str, str | None]) -> Markup:
 def _banner(source: ReviewSource) -> Markup:
     if source.verified:
         return el("p", el("strong", "Verified: "), source.verification)
+    if source.kind == "ledger" and source.runs:
+        return el(
+            "div",
+            el("strong", "Ledger only -- no sealed bundle; adjudication is disabled. "),
+            source.verification,
+            class_="blinded",
+        )
     return el(
         "div",
         el("strong", "NOT VERIFIED -- do not rely on this evidence; adjudication is disabled. "),

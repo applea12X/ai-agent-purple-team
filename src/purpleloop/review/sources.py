@@ -50,7 +50,7 @@ from purpleloop.reporting.bundle import verify_bundle
 from purpleloop.runtime.ledger import EvidenceLedger, LedgerError
 from purpleloop.schemas.authorization import AuthorizationManifest
 
-SourceKind = Literal["run-bundle", "suite-bundle", "audit-export"]
+SourceKind = Literal["run-bundle", "suite-bundle", "audit-export", "ledger"]
 
 #: Ledger event kinds whose content is a verdict. Hidden while a finding is blinded.
 VERDICT_KINDS = frozenset({"oracle", "detector", "judge"})
@@ -364,9 +364,48 @@ def load_audit_export(path: Path) -> ReviewSource:
     )
 
 
+def load_ledger_run(directory: Path) -> ReviewSource:
+    """A directory with a ledger but no sealed inventory, e.g. a run refused at admission.
+
+    Viewable (its hash chain is verified first) and never adjudicable: there is no sealed bundle
+    for a record to name, and a refused run has no accepted finding to label.
+    """
+    ledger = directory / "evidence.jsonl"
+    try:
+        events = EvidenceLedger(ledger).verify()
+        verification = "not a sealed bundle; the ledger's hash chain verified"
+        runs: tuple[ReviewRun, ...] = (
+            ReviewRun(
+                index=0,
+                name="run",
+                scenario_id=str(events[0].scenario_id or "") if events else "",
+                summary={},
+                scenario=None,
+                events=tuple(event.model_dump(mode="json") for event in events),
+                events_complete=True,
+            ),
+        )
+    except (OSError, LedgerError) as exc:
+        verification, runs = f"not a sealed bundle; the ledger FAILED to verify: {exc}", ()
+    return ReviewSource(
+        path=directory,
+        kind="ledger",
+        bundle_digest=hashlib.sha256(ledger.read_bytes()).hexdigest(),
+        verified=False,
+        verification=verification,
+        runs=runs,
+        harness_key_ids=frozenset(),
+        harness_public_keys=frozenset(),
+        findings=(),
+        adjudication_blocked="a ledger without a sealed inventory cannot be adjudicated",
+    )
+
+
 def load_source(path: Path) -> ReviewSource:
     """Load a bundle directory or an audit-export file, verifying it first."""
     if path.is_dir():
+        if not (path / "inventory.json").exists() and (path / "evidence.jsonl").is_file():
+            return load_ledger_run(path)
         return load_bundle(path)
     if path.is_file():
         try:
