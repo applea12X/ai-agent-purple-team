@@ -48,14 +48,12 @@ from purpleloop.control.attacker import (
     require_attacker_authorized,
 )
 from purpleloop.control.capabilities import OPERATION_ACTION_CLASSES
-from purpleloop.control.kill_switch import KernelState
 from purpleloop.control.lanes import LaneContract
 from purpleloop.control.manifest import ManifestError
 from purpleloop.control.plan_compiler import compile_plan, compile_step
 from purpleloop.reporting.bundle import UNINVENTORIED, inventory, write_json
 from purpleloop.runtime.fixture import FixtureController
 from purpleloop.runtime.ledger import EvidenceLedger
-from purpleloop.runtime.runner import RUN_STOP_REASONS
 from purpleloop.runtime.runtime import RuntimeResult, SafetyRuntime
 from purpleloop.schemas.action import ActionRequest, BudgetRequest, SideEffectClass
 from purpleloop.schemas.authorization import SIDE_EFFECT_ACTION_CLASS, AuthorizationManifest
@@ -211,15 +209,10 @@ class _ScenarioShadow:
                 "runtime_reason": result.reason_code,
             },
         )
-        if (
-            self.runtime.kill_switch.state != KernelState.RUNNING
-            or result.reason_code in RUN_STOP_REASONS
-            or source != "proposal"
-        ):
-            # A paired run fails closed on a planned or control action that does not complete,
-            # and on any run-level stop; the shadow walk ends at the same point.
-            raise _Stopped(result.reason_code)
-        return result
+        # A paired run fails closed on any planned, control, or accepted-proposal action that
+        # does not complete (``PurpleTeamRunner.action``); the shadow walk ends at the same point,
+        # so the report never counts a step the paired run would not have reached.
+        raise _Stopped(result.reason_code)
 
     async def control(self, operation: str, arguments: dict[str, Any] | None = None) -> None:
         await self.submit(self.controller.action_for(operation, arguments), "control")
@@ -394,12 +387,7 @@ class _ScenarioShadow:
                 self.record("SHADOW_PROPOSALS_STOPPED", {"reason": "PROPOSAL_BUDGET_EXHAUSTED"})
                 return False
             self.record(record.reason_code, record.model_dump(mode="json"), kind=EventKind.PROPOSAL)
-            result = await self.submit(compiled, "proposal")
-            if result.status != "suppressed":
-                # Compiled, then denied by the kernel: a rejection the attacker is told about.
-                record = record.model_copy(
-                    update={"accepted": False, "reason_code": _reason_key(result.reason_code)}
-                )
+            await self.submit(compiled, "proposal")
             self.feedback.append(record)
         return True
 
