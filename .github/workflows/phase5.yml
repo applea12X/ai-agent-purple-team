@@ -36,3 +36,35 @@ jobs:
         with:
           name: phase5-contracts-evidence
           path: artifacts/
+
+  # WP5.2 evaluation matrix — offline stand-in subset only. Signs a three-scenario draft with a
+  # key generated for the job, runs it (three deterministic stand-ins, no model endpoint), and
+  # re-verifies the result. Real-pin rows never run on a PR or a push: they need a GPU, a signed
+  # spend authorization, and an endpoint, none of which this job has.
+  matrix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - name: Assert the matrix lane holds no model credential or endpoint
+        run: |
+          if [ -n "$PURPLELOOP_MODEL_API_KEY" ] || [ -n "$PURPLELOOP_MODEL_ENDPOINT" ]; then
+            echo "::error::model credentials must never reach the matrix lane"
+            exit 1
+          fi
+      - run: uv run pytest tests/phase5/test_evaluation_matrix.py --no-cov
+      - name: Sign and run the offline stand-in subset
+        run: |
+          uv run purpleloop matrix-sign scenarios/matrix/standins-ci-subset.draft.json \
+            --out artifacts/matrix-ci/spec.json --generate-key "$RUNNER_TEMP/matrix-key.pem"
+          uv run purpleloop matrix-run artifacts/matrix-ci/spec.json --output-dir artifacts/matrix-ci
+          uv run purpleloop matrix-report "$(ls -d artifacts/matrix-ci/*/ | tail -1)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase5-matrix-evidence
+          path: artifacts/matrix-ci/

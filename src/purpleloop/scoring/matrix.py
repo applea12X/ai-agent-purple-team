@@ -64,6 +64,9 @@ class MatrixTrial(StrictModel):
     reason: str
     baseline_success: bool | None = None
     replay_success: bool | None = None
+    #: Attack-phase model calls, as ``LegResult.model_calls`` counts them (both legs summed).
+    #: The clean-task and utility-under-attack calls are not in it; the run's full call count is
+    #: ``runtime.matrix.model_calls_per_trial``, which the pre-flight uses.
     model_calls: int = Field(default=0, ge=0)
     tokens: int = Field(default=0, ge=0)
     cost_microusd: int = Field(default=0, ge=0)

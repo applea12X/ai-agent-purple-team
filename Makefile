@@ -117,3 +117,13 @@ judge-report-networked:
 	uv run purpleloop judge-report --output-dir artifacts/judge-networked \
 		--judge-endpoint "$$PURPLELOOP_JUDGE_ENDPOINT" \
 		--judge-profile "$${PURPLELOOP_JUDGE_PROFILE:-openai-compatible}"
+
+# Phase 5 evaluation matrix (WP5.2). The stand-in matrix is offline and deterministic; the
+# real-pin matrix needs local Ollama and is never run in CI (see docs/phase5/wp5.2-acceptance.md).
+.PHONY: matrix-standins matrix-real-dry-run
+matrix-standins:
+	uv run purpleloop matrix-run scenarios/matrix/standins-full.json --output-dir artifacts/matrix-standins
+
+matrix-real-dry-run:
+	uv run purpleloop matrix-run scenarios/matrix/real-pins-full.json --output-dir artifacts/matrix-real --dry-run || true
+	uv run purpleloop matrix-run scenarios/matrix/real-pins-subset.json --output-dir artifacts/matrix-real --dry-run
