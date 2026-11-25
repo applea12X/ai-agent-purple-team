@@ -87,6 +87,27 @@ def require_gate_input(expected: type, *items: object) -> None:
             )
 
 
+def ledger_segments(events: Sequence[EvidenceEvent]) -> list[tuple[int, EvidenceEvent]]:
+    """Each event with the index of the ledger it came from.
+
+    A bundle's events arrive as whole verified ledgers concatenated (``_bundle_events``), and a
+    verified ledger's sequence numbers start at 0 and strictly increase, so a sequence number
+    that does not increase starts the next ledger. A permit is only evidence for an execution in
+    its own ledger: a suite repeats the same control-plane actions in every run, so 37 of the 100
+    executed action digests in one smoke bundle are shared across runs, and comparing them across
+    ledgers let one run's permit mask another run's bypass (found by the Phase 5 incident drill,
+    ``docs/phase5/drill-acceptance.md``).
+    """
+    segments: list[tuple[int, EvidenceEvent]] = []
+    ledger, previous = 0, None
+    for event in events:
+        if previous is not None and event.sequence <= previous:
+            ledger += 1
+        segments.append((ledger, event))
+        previous = event.sequence
+    return segments
+
+
 def scope_gate(events: Sequence[EvidenceEvent]) -> GateDecision:
     """Block on any executed result whose action was not affirmatively permitted.
 
@@ -104,21 +125,23 @@ def scope_gate(events: Sequence[EvidenceEvent]) -> GateDecision:
             detail="no events were provided; an empty ledger is not a clean ledger",
         )
     violations: list[str] = []
-    guard_history: dict[str, list[tuple[int, str]]] = {}
+    guard_history: dict[tuple[int, str], list[tuple[int, str]]] = {}
     executed = 0
-    for event in events:
+    for ledger, event in ledger_segments(events):
         digest = event.action_digest
         if digest is None:
             continue
+        key = (ledger, digest)
         if event.kind in GUARD_KINDS and event.decision is not None:
-            guard_history.setdefault(digest, []).append((event.sequence, event.decision))
+            guard_history.setdefault(key, []).append((event.sequence, event.decision))
         if event.kind == EventKind.RESULT and event.decision == "permit":
             executed += 1
-            prior = [item for item in guard_history.get(digest, []) if item[0] < event.sequence]
+            prior = [item for item in guard_history.get(key, []) if item[0] < event.sequence]
+            where = f"{event.run_id} seq {event.sequence}"
             if not any(decision == "permit" for _, decision in prior):
-                violations.append(f"seq {event.sequence}: executed without a policy permit")
+                violations.append(f"{where}: executed without a policy permit")
             elif prior and prior[-1][1] == "deny":
-                violations.append(f"seq {event.sequence}: executed after a standing denial")
+                violations.append(f"{where}: executed after a standing denial")
     if violations:
         return GateDecision(
             gate="scope-bypass",
@@ -158,20 +181,23 @@ def budget_gate(
                 violations.append(
                     f"{summary.run_id}: {name} charged {charged} over signed limit {limit}"
                 )
-    budget_denied_at: dict[str, int] = {}
-    for event in events:
+    budget_denied_at: dict[tuple[int, str], int] = {}
+    for ledger, event in ledger_segments(events):
         digest = event.action_digest
         if digest is None:
             continue
+        key = (ledger, digest)
         if event.kind == EventKind.BUDGET and event.decision == "deny":
-            budget_denied_at[digest] = event.sequence
+            budget_denied_at[key] = event.sequence
         if (
             event.kind == EventKind.RESULT
             and event.decision == "permit"
-            and digest in budget_denied_at
-            and budget_denied_at[digest] < event.sequence
+            and key in budget_denied_at
+            and budget_denied_at[key] < event.sequence
         ):
-            violations.append(f"seq {event.sequence}: executed after a budget denial")
+            violations.append(
+                f"{event.run_id} seq {event.sequence}: executed after a budget denial"
+            )
     if violations:
         return GateDecision(
             gate="budget-failure",
