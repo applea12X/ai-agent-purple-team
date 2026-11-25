@@ -8,6 +8,7 @@ from typing import cast
 from pydantic import computed_field
 
 from purpleloop.adapters.base import Adapter, AdapterResult, SubresourceDenied
+from purpleloop.control.approvals import AdmissionDecision, ApprovalAdmission, ApprovalRefused
 from purpleloop.control.budgets import BudgetError, BudgetLedger, Reservation
 from purpleloop.control.credentials import CredentialBroker
 from purpleloop.control.kill_switch import KernelState, KernelStopped, KillSwitch
@@ -24,7 +25,7 @@ from purpleloop.runtime.ledger import EvidenceLedger
 from purpleloop.schemas.action import ActionRequest, ActionTarget, BudgetRequest, TargetObservation
 from purpleloop.schemas.authorization import AuthorizationManifest
 from purpleloop.schemas.common import StrictModel, digest_data
-from purpleloop.schemas.event import EventKind, EvidenceEvent
+from purpleloop.schemas.event import SHADOW_EVENT_SCHEMA, EventKind, EvidenceEvent
 
 
 class BoundaryDenied(RuntimeError):
@@ -78,6 +79,8 @@ class SafetyRuntime:
         adapter: Adapter,
         ledger: EvidenceLedger,
         clock: Callable[[], datetime] | None = None,
+        shadow: bool = False,
+        admission: ApprovalAdmission | None = None,
     ) -> None:
         self.verifier = verifier
         self.policy = policy
@@ -88,6 +91,12 @@ class SafetyRuntime:
         self.adapter = adapter
         self.ledger = ledger
         self.clock = clock or (lambda: datetime.now(UTC))
+        #: Shadow mode (WP5.1): decide every action in full and dispatch none. Either this flag or
+        #: a shadow manifest puts the runtime in shadow; nothing can take it out again for a run.
+        self.shadow = shadow
+        #: Capability-increase admission for manifest 1.5 (``control.approvals``). Without it, a
+        #: 1.5 manifest is refused: an unconfigured check is not a passed check.
+        self.admission = admission
         self.scenario_id: str | None = None
         self.scenario_version: str | None = None
         self.stage: str | None = None
@@ -109,6 +118,8 @@ class SafetyRuntime:
 
         try:
             self.verifier.verify(manifest, now=self.clock())
+            if manifest.phase5 is not None:
+                self._admit_capabilities(manifest)
         except ManifestError as exc:
             event = self._record(
                 run_id,
@@ -159,6 +170,42 @@ class SafetyRuntime:
                 exc.reason_code,
                 event_hashes,
                 effective_redactor,
+            )
+
+        if self.is_shadow(manifest):
+            # Shadow: admission, policy, kill switch, and the budget reservation above all ran
+            # exactly as for an execution. The adapter is never reached because nothing here
+            # dispatches to it -- there is no task, no credential resolution, no target guard.
+            # The reservation is finalized as consumed, so a shadow run exhausts its budget
+            # where an execution would have.
+            try:
+                event = self._record(
+                    run_id,
+                    trace_id,
+                    EventKind.SHADOW_SUPPRESSED,
+                    manifest_digest,
+                    decision.policy_digest,
+                    action_digest,
+                    "suppressed",
+                    "SHADOW_SUPPRESSED",
+                    {
+                        "would_apply": decision.effect.value,
+                        "policy_reason": decision.reason_code,
+                        "adapter": action.adapter,
+                        "operation": action.operation,
+                        "side_effect": action.side_effect.value,
+                        "budget": action.budget.model_dump(mode="json"),
+                    },
+                    redactor=effective_redactor,
+                    schema_version=SHADOW_EVENT_SCHEMA,
+                )
+            finally:
+                await self.budgets.finalize(reservation)
+            event_hashes.append(event.event_hash or "")
+            return RuntimeResult(
+                status="suppressed",
+                reason_code="SHADOW_SUPPRESSED",
+                event_hashes=tuple(event_hashes),
             )
 
         next_hop = 0
@@ -312,6 +359,8 @@ class SafetyRuntime:
         async def adapter_activity() -> AdapterResult:
             nonlocal effective_redactor
             self.verifier.verify(manifest, now=self.clock())
+            if manifest.phase5 is not None:
+                self._admit_capabilities(manifest)
             latest_decision = self.policy.evaluate(manifest, action)
             if not latest_decision.permitted:
                 raise BoundaryDenied(latest_decision.reason_code)
@@ -419,6 +468,60 @@ class SafetyRuntime:
             detail=detail,
         )
 
+    def is_shadow(self, manifest: AuthorizationManifest) -> bool:
+        """True when this action must be decided and not dispatched."""
+        return self.shadow or (manifest.phase5 is not None and manifest.phase5.run_mode == "shadow")
+
+    def _admit_capabilities(self, manifest: AuthorizationManifest) -> AdmissionDecision:
+        """Refuse a 1.5 manifest whose capability increase is not covered (ApprovalRefused)."""
+        if self.admission is None:
+            raise ApprovalRefused(
+                "APPROVAL_ADMISSION_UNCONFIGURED",
+                "a manifest 1.5 needs the approved baseline to be admitted",
+            )
+        return self.admission.admit(manifest, now=self.clock())
+
+    def admit(
+        self, manifest: AuthorizationManifest, *, run_id: str, trace_id: str
+    ) -> AdmissionDecision | None:
+        """Run-level capability admission, recorded as one ``ADMISSION`` event.
+
+        ``None`` for a manifest before 1.5, with nothing recorded, so a v1 ledger is unchanged.
+        For 1.5 the decision -- admitted with its delta, or refused with its reason -- is
+        evidence either way, and a refusal raises :class:`ApprovalRefused` after it is recorded.
+        """
+        if manifest.phase5 is None:
+            return None
+        try:
+            decision = self._admit_capabilities(manifest)
+        except ApprovalRefused as exc:
+            self._record(
+                run_id,
+                trace_id,
+                EventKind.ADMISSION,
+                manifest.manifest_digest(),
+                getattr(self.policy, "policy_digest", "0" * 64),
+                None,
+                "deny",
+                exc.reason_code,
+                {"detail": str(exc)[:MAX_FAILURE_DETAIL]},
+                redactor=self.redactor,
+            )
+            raise
+        self._record(
+            run_id,
+            trace_id,
+            EventKind.ADMISSION,
+            manifest.manifest_digest(),
+            getattr(self.policy, "policy_digest", "0" * 64),
+            None,
+            "permit",
+            decision.reason_code,
+            decision.evidence(),
+            redactor=self.redactor,
+        )
+        return decision
+
     def _denied_with_event(
         self,
         run_id: str,
@@ -454,15 +557,16 @@ class SafetyRuntime:
         kind: EventKind,
         manifest_digest: str,
         policy_digest: str,
-        action_digest: str,
+        action_digest: str | None,
         decision: str,
         reason_code: str,
         data: dict[str, object] | None = None,
         *,
         redactor: Redactor,
+        schema_version: str | None = None,
     ) -> EvidenceEvent:
         event = EvidenceEvent(
-            schema_version="1.1.0" if self.scenario_id else None,
+            schema_version=schema_version or ("1.1.0" if self.scenario_id else None),
             scenario_id=self.scenario_id,
             scenario_version=self.scenario_version,
             stage=self.stage,

@@ -142,3 +142,52 @@ jobs:
         with:
           name: phase5-nightly-evidence
           path: artifacts/
+
+  # WP5.1 — shadow mode and risk approval. The governance tests (capability delta, admission,
+  # shadow mode with its zero-dispatch measurement over every corpus, the model-driven attacker
+  # on a scripted model, the CLI sequence), then the CLI sequence itself with an approver key
+  # generated for this job and discarded with the runner. No model, no credential.
+  governance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - name: Assert the governance lane holds no model credential
+        run: |
+          if [ -n "$PURPLELOOP_MODEL_API_KEY" ] || [ -n "$PURPLELOOP_MODEL_ENDPOINT" ]; then
+            echo "::error::model credentials must never reach the governance lane"
+            exit 1
+          fi
+      - run: >-
+          uv run pytest --no-cov --junitxml=artifacts/junit-governance.xml
+          tests/phase5/test_capability_delta.py tests/phase5/test_approval_admission.py
+          tests/phase5/test_shadow_mode.py tests/phase5/test_model_driven_attacker.py
+          tests/phase5/test_governance_cli.py tests/phase5/test_capability_baseline.py
+          tests/phase5/test_risk_class_scenarios_removed.py
+      - run: uv run purpleloop capability-baseline --check
+      - name: Shadow, approve, and check a model-driven attacker (ephemeral approver key)
+        run: |
+          uv run purpleloop approver-keygen "$RUNNER_TEMP/approver.pem" "$RUNNER_TEMP/approver.pub.pem"
+          uv run purpleloop shadow-run artifacts/governance/shadow --proposal-source model-driven
+          uv run purpleloop approve artifacts/governance/shadow \
+            --approver-key "$RUNNER_TEMP/approver.pem" --approver-key-id approver-ci-ephemeral \
+            --approver "the CI runner, holding a key generated for this job" \
+            --rationale "CI proof of the approval path" --ttl-hours 1 \
+            --out artifacts/governance/approval.json
+          uv run purpleloop approval-check artifacts/governance/shadow \
+            --approval artifacts/governance/approval.json \
+            --approver-public-key "$RUNNER_TEMP/approver.pub.pem" \
+            --approver-key-id approver-ci-ephemeral
+          if uv run purpleloop approval-check artifacts/governance/shadow; then
+            echo "::error::an unapproved capability increase was admitted"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase5-governance-evidence
+          path: artifacts/

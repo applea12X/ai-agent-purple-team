@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
-from purpleloop.control.attacker import BoundedAttacker
+from purpleloop.control.attacker import (
+    BoundedAttacker,
+    ModelDrivenAttacker,
+    Proposal,
+    require_attacker_authorized,
+)
 from purpleloop.control.kill_switch import KernelState
 from purpleloop.control.lanes import PHASE1_LANE, LaneContract
 from purpleloop.control.phase1_tools import ChatArgs, ToolIntent
@@ -94,7 +99,7 @@ class PurpleTeamRunner:
         stage_hook: Callable[[Stage], Awaitable[None]] | None = None,
         lane: LaneContract = PHASE1_LANE,
         browser: BrowserProbe | None = None,
-        attacker: BoundedAttacker | None = None,
+        attacker: BoundedAttacker | ModelDrivenAttacker | None = None,
         judge: HybridJudge | None = None,
     ) -> None:
         self.runtime = runtime
@@ -397,7 +402,7 @@ class PurpleTeamRunner:
         evidence: list[str] = []
         if self.attacker is None:
             return responses, tuple(evidence)
-        for proposal in self.attacker.proposals():
+        async for proposal in self.proposal_stream():
             step = Step(
                 node_id=f"proposal-{proposal.index}",
                 adapter=cast(
@@ -438,6 +443,62 @@ class PurpleTeamRunner:
             responses.append(response)
             evidence.extend(ids)
         return responses, tuple(evidence)
+
+    async def proposal_stream(self) -> AsyncIterator[Proposal]:
+        """The attacker's proposals in order. The bounded search yields exactly what it always did.
+
+        The model-driven profile (WP5.1.6) must be named by the signed manifest, and its caps are
+        enforced here from the signed manifest again, independently of the attacker object. The
+        model sees only the kernel's decisions on earlier proposals, never target content.
+        """
+        attacker = self.attacker
+        if attacker is None:
+            return
+        if isinstance(attacker, BoundedAttacker):
+            for proposal in attacker.proposals():
+                yield proposal
+            return
+        require_attacker_authorized(attacker, self.manifest)
+        phase3 = self.manifest.phase3
+        cap = phase3.max_attacker_proposals if phase3 is not None else 0
+        depth_cap = phase3.max_attacker_depth if phase3 is not None else 0
+        made = 0
+        while (round_ := await attacker.next_round(tuple(self.proposals))) is not None:
+            self.record(
+                EventKind.MODEL,
+                "ATTACKER_MODEL_CALLED",
+                {
+                    "pin_id": attacker.pin.pin_id,
+                    "depth": round_.depth,
+                    "prompt_digest": round_.prompt_digest,
+                    "response_digest": round_.response_digest,
+                    "input_tokens": round_.input_tokens,
+                    "output_tokens": round_.output_tokens,
+                },
+            )
+            await self.runtime.budgets.charge(
+                BudgetRequest(
+                    requests=0, records=0, tokens=round_.input_tokens + round_.output_tokens
+                )
+            )
+            for operation, reason in round_.invalid:
+                record = ProposalRecord(
+                    proposal_index=len(self.proposals),
+                    depth=round_.depth,
+                    operation=operation[:64],
+                    accepted=False,
+                    reason_code=reason,
+                )
+                self.proposals.append(record)
+                self.record(EventKind.PROPOSAL, reason, record.model_dump(mode="json"))
+            if not round_.proposals:
+                return
+            for proposal in round_.proposals:
+                if made >= cap or proposal.depth > depth_cap:
+                    self.record(EventKind.LIFECYCLE, "PROPOSAL_CAP_REACHED", {"made": made})
+                    return
+                made += 1
+                yield proposal
 
     def max_intents_per_turn(self) -> int:
         """The signed per-turn intent cap. A literal here would be an unreviewed authority grant."""
@@ -618,6 +679,11 @@ class PurpleTeamRunner:
         try:
             await self.stage(Stage.ADMISSION)
             self.runtime.verifier.verify(manifest, now=self.runtime.clock())
+            # Capability admission (WP5.1). A no-op that records nothing before manifest 1.5; for
+            # 1.5 the decision is an ADMISSION event and a refusal ends the run with its reason.
+            self.runtime.admit(
+                manifest, run_id=run_id, trace_id=f"{scenario.scenario_id}-admission"
+            )
             self.plan = compile_plan(scenario, manifest, lane=self.lane)
             summary = summary.model_copy(update={"plan_digest": self.plan.digest()})
             if self.lane is not PHASE1_LANE:
