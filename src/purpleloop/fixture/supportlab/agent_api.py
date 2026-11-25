@@ -11,10 +11,14 @@ the signed manifest must pre-authorize:
     caller to quarantine it, which is what a context-marking mitigation does in practice -- and the
     application enforces the provenance itself: once the actor's current assistant run has read
     untrusted content, an outbound message that leaves the organisation or carries the tracer is
-    refused. Marking alone asks the model to cooperate; a real model was measured not to
-    (``docs/phase4-acceptance.md``, WP4.0.1), so the guard does not depend on it.
+    refused, and so are an unapproved export, an unapproved refund, and a privileged CRM write.
+    Marking alone asks the model to cooperate; a real model was measured not to, first at the
+    email sink (``docs/phase4-acceptance.md``, WP4.0.1) and then at the other three
+    (``docs/phase5/wp5.0-real-model-acceptance.md``), so the guard does not depend on it.
 ``memory_write_guard``
     Off, the assistant may persist content it derived from untrusted input. On, that is refused.
+    Whether content is untrusted-derived is the application's record of what the assistant read,
+    never only the label the assistant attaches to the write.
 ``output_sanitization``
     Off, an agent tool may address an external destination or carry an exfiltration tracer.
     On, neither.
@@ -77,6 +81,20 @@ class Helpers:
     capabilities: Callable[[], frozenset[str]]
 
 
+def retrieval_tainted(db: Database, user: dict[str, Any]) -> bool:
+    """True when the actor's most recent assistant run retrieved untrusted content.
+
+    The application's own record of what the assistant read, so every sink that enforces
+    provenance asks the same question and none of them asks the model.
+    """
+    latest = db.one(
+        "SELECT untrusted_chunks FROM agent_runs WHERE org_id = ? AND actor_id = ? "
+        "ORDER BY seq DESC, id DESC LIMIT 1",
+        (str(user["org_id"]), str(user["id"])),
+    )
+    return latest is not None and int(latest["untrusted_chunks"]) > 0
+
+
 def register_agent_routes(data: FastAPI, db: Database, helpers: Helpers) -> None:
     actor, result = helpers.actor, helpers.result
     idempotent, finish, audit, flag = (
@@ -91,13 +109,7 @@ def register_agent_routes(data: FastAPI, db: Database, helpers: Helpers) -> None
         return flag("capability_scoping") and operation not in helpers.capabilities()
 
     def tainted(user: dict[str, Any]) -> bool:
-        """True when the actor's most recent assistant run retrieved untrusted content."""
-        latest = db.one(
-            "SELECT untrusted_chunks FROM agent_runs WHERE org_id = ? AND actor_id = ? "
-            "ORDER BY seq DESC, id DESC LIMIT 1",
-            (str(user["org_id"]), str(user["id"])),
-        )
-        return latest is not None and int(latest["untrusted_chunks"]) > 0
+        return retrieval_tainted(db, user)
 
     @data.post("/api/agent/context")
     async def agent_context(args: AgentContextArgs, request: Request) -> dict[str, Any]:
@@ -252,7 +264,10 @@ def register_agent_routes(data: FastAPI, db: Database, helpers: Helpers) -> None
         if subject is None or subject["org_id"] != user["org_id"]:
             raise HTTPException(403, "subject is outside actor scope")
         privileged = args.field in PRIVILEGED_FIELDS
-        denied = scoped("crm.update")
+        denied = scoped("crm.update") or (
+            # An authority change steered by untrusted content is refused by the application.
+            flag("retrieval_provenance") and privileged and tainted(user)
+        )
         tick = db.next_tick()
         if not denied:
             db.execute(
@@ -287,7 +302,11 @@ def register_agent_routes(data: FastAPI, db: Database, helpers: Helpers) -> None
         key, fingerprint, prior = idempotent(request, args.model_dump())
         if prior is not None:
             return prior
-        untrusted = args.derived_from == "untrusted"
+        # Provenance is the application's record of what the assistant read, not the label the
+        # assistant attaches. A real model was measured labelling an injected write "trusted"
+        # (WP5.0.2), so the label can only make a write less trusted, never more.
+        untrusted = args.derived_from == "untrusted" or tainted(user)
+        trust_level = "untrusted" if untrusted else "trusted"
         denied = scoped("memory.write") or (untrusted and flag("memory_write_guard"))
         tick = db.next_tick()
         if not denied:
@@ -300,7 +319,7 @@ def register_agent_routes(data: FastAPI, db: Database, helpers: Helpers) -> None
                     str(user["id"]),
                     args.topic,
                     args.body,
-                    args.derived_from,
+                    trust_level,
                     db.count("memory") + 1,
                 ),
             )
@@ -315,7 +334,7 @@ def register_agent_routes(data: FastAPI, db: Database, helpers: Helpers) -> None
         return finish(
             key,
             fingerprint,
-            result({"written": not denied, "trust_level": args.derived_from}, denied),
+            result({"written": not denied, "trust_level": trust_level}, denied),
         )
 
     @data.post("/api/agent/memory/read")

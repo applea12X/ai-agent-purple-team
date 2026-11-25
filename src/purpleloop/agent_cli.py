@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -170,6 +170,34 @@ def run_outcome(
     if summary.reason in ENDPOINT_REASONS:
         return "endpoint-error"
     return "fail"
+
+
+#: Most severe first. A repetition set's outcome is its worst repetition's.
+_OUTCOME_SEVERITY = ("fail", "endpoint-error", "budget-stop", "pass")
+
+
+def repetition_outcome(
+    summaries: Sequence[RunSummary],
+) -> tuple[RunSummary, Literal["pass", "fail", "budget-stop", "endpoint-error"], str]:
+    """The outcome of a set of completed repetitions, with the repetition it came from.
+
+    A scenario passes only when every completed repetition passed. The outcome used to be the
+    first repetition's alone, which was harmless while every repetition took the same path
+    (temperature 0, fixed seed) and wrong under sampling: the WP5.0.2 run on a real model
+    reported scenarios as passing whose later repetitions regressed, and as failing when only
+    the first did not pass. The detail names every repetition's status so nothing is averaged.
+    """
+    if not summaries:
+        raise ValueError("no completed repetition to classify")
+    outcomes = [run_outcome(summary) for summary in summaries]
+    worst = min(outcomes, key=_OUTCOME_SEVERITY.index)
+    detail = (
+        ""
+        if len(summaries) == 1
+        else "repetitions: "
+        + " ".join(f"{index}={summary.status}" for index, summary in enumerate(summaries))
+    )
+    return summaries[outcomes.index(worst)], worst, detail
 
 
 def _write_outcome(output_dir: Path, outcome: StochasticRunOutcome) -> None:
@@ -614,7 +642,7 @@ def register(app: typer.Typer) -> None:
             )
             typer.echo("FAILED: every repetition was excluded", err=True)
             raise typer.Exit(1)
-        enriched = apply_reproducibility(summaries[0], report)
+        decisive, outcome, detail = repetition_outcome(summaries)
         write_json(output_dir / "stochastic.json", report.model_dump(mode="json"))
         if repetitions > 1:
             # The stochastic lane's own replay number, beside -- never inside -- the
@@ -626,20 +654,21 @@ def register(app: typer.Typer) -> None:
         _write_outcome(
             output_dir,
             StochasticRunOutcome(
-                outcome=run_outcome(enriched),
-                reason_code=enriched.reason or enriched.status.upper(),
+                outcome=outcome,
+                reason_code=decisive.reason or decisive.status.upper(),
+                detail=detail,
                 scenario_id=scenario.scenario_id,
                 model_pin_id=pin_id,
             ),
         )
         typer.echo(
-            f"{enriched.status.upper()} n={report.repetitions.completed} "
+            f"{decisive.status.upper()} n={report.repetitions.completed} "
             f"attack_success={report.attack_success.value:.3f} "
             f"clean_utility={report.clean_utility.value:.3f} "
             f"utility_under_attack={report.utility_under_attack.value:.3f} "
             f"side_effects={report.executed_unauthorized_side_effects.value:.3f}"
         )
-        if enriched.status != "passed":
+        if outcome != "pass":
             raise typer.Exit(1)
 
     @app.command("judge-report")
@@ -1032,12 +1061,16 @@ async def _run_suite(
                 root / "reproduction" / f"{scenario.scenario_id}.json",
                 reproduction_record(report.repetitions).model_dump(mode="json"),
             )
+        # The report shows the first repetition's evidence, as it always has; the outcome is
+        # the whole set's, so a later repetition's regression is never hidden behind it.
         enriched = apply_reproducibility(runs[0], report)
         suite.summaries.append(enriched)
+        decisive, verdict, detail = repetition_outcome(runs)
         if networked:
             outcome = StochasticRunOutcome(
-                outcome=run_outcome(enriched),
-                reason_code=enriched.reason or enriched.status.upper(),
+                outcome=verdict,
+                reason_code=decisive.reason or decisive.status.upper(),
+                detail=detail,
                 scenario_id=scenario.scenario_id,
                 model_pin_id=pin_id,
             )
@@ -1045,7 +1078,8 @@ async def _run_suite(
             write_json(
                 root / "outcomes" / f"{scenario.scenario_id}.json", outcome.model_dump(mode="json")
             )
-        typer.echo(f"{path.stem}: {enriched.status} (n={report.repetitions.completed})")
+        statuses = f"; {detail}" if detail else ""
+        typer.echo(f"{path.stem}: {decisive.status} (n={report.repetitions.completed}{statuses})")
     return suite
 
 
