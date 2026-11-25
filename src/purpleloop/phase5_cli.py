@@ -12,10 +12,13 @@ import json
 
 import typer
 
+from purpleloop.review import cli as review_cli
 from purpleloop.schemas.phase5 import CONTRACT_VERSIONS
 
 
 def register(app: typer.Typer) -> None:
+    review_cli.register(app)  # WP5.0.8 adjudicate/precision-report, WP5.4 review
+
     @app.command("phase5-contracts")
     def phase5_contracts(as_json: bool = typer.Option(False, "--json")) -> None:
         """Print every Phase 5 contract and the version this code implements."""
