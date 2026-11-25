@@ -279,7 +279,16 @@ def risk_class_gate(
     *,
     alpha: float = PREREGISTERED_ALPHA,
 ) -> GateDecision:
-    """Block on the pre-registered per-risk-class regression test (scoring.phase4)."""
+    """Block on the pre-registered per-risk-class regression test (scoring.phase4).
+
+    After the comparison, one more deterministic fact (WP5.1 follow-up to the WP5.0.7 finding):
+    a class whose current scenario count is below its baseline count blocks as
+    ``SCENARIOS_REMOVED``. Rates and newly-missed counts cannot see a deleted scenario -- a class
+    at 2/2 seeded true positives that loses one scenario is at 1/1, the same recall -- so without
+    this a removal passed the gate and was caught only by the corpus-baseline test one step
+    earlier. Added scenarios still never block; a lower count is the only new trigger, so every
+    decision on a corpus whose counts match the baseline is unchanged.
+    """
     require_gate_input(RiskClassBaseline, baseline)
     require_gate_input(RiskClassMetrics, *current)
     comparisons = compare_risk_classes(baseline, current, alpha=alpha)
@@ -294,6 +303,21 @@ def risk_class_gate(
                 + (f" (p={item.p_value})" if item.p_value is not None else "")
                 for item in blocked[:20]
             ),
+        )
+    removed = [
+        f"{item.risk_class}: {item.current.scenarios} scenario(s) against "
+        f"{item.baseline.scenarios} in the baseline"
+        for item in comparisons
+        if item.baseline is not None
+        and item.current is not None
+        and item.current.scenarios < item.baseline.scenarios
+    ]
+    if removed:
+        return GateDecision(
+            gate="risk-class-regression",
+            blocked=True,
+            reason_code="SCENARIOS_REMOVED",
+            detail="; ".join(removed[:20]),
         )
     return GateDecision(
         gate="risk-class-regression",

@@ -132,6 +132,15 @@ The rules, fixed before any baseline existed:
    pre-registered alpha = 0.05 and in the losing direction.
 5. Added scenarios and new classes change denominators without blocking; the baseline-bump
    commit records the growth.
+6. *(Added in WP5.1, after rules 1–5 have passed.)* A class whose current scenario count is
+   below its baseline count blocks (`SCENARIOS_REMOVED`). Rules 1–4 compare rates and
+   newly-missed counts, so a deleted seeded scenario — 2/2 in the baseline, 1/1 now — was
+   invisible to the gate itself (finding recorded in `docs/phase5/wp5.0.7-acceptance.md`) and
+   was caught only by the corpus-baseline test one step earlier. The rule only adds a block for
+   a lower count, so rule 5 is unchanged and every decision on a corpus whose counts match the
+   baseline is unchanged (`tests/phase5/test_risk_class_scenarios_removed.py`). This rule lives
+   in `risk_class_gate`, not in the pre-registered `compare_risk_classes`, whose per-class
+   comparisons are untouched.
 
 **The stochastic lane's own numbers.** The nightly lane classifies every run into a closed
 outcome vocabulary — `pass`, `fail`, `budget-stop`, `skip-no-credential`, `endpoint-error` —
