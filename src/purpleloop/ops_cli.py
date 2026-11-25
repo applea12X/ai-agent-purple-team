@@ -1,6 +1,9 @@
 """Operational commands closing Phase 0-4 loose ends (docs/phase5/loose-ends.md).
 
 * ``browser-estop`` measures the browser lane's emergency-stop latency (row 2.4).
+* ``retention-plan`` resolves the signed retention rules over a real artifact tree (row 4.12);
+  ``locate-ledger-break`` and ``locate-action`` are the two lookups the incident drill found the
+  runbook needed and no command provided (row 4.12).
 * ``nightly-scope``, ``nightly-scope-sign``, ``nightly-lane``, and ``nightly-issue`` are the
   nightly lane's scope reader, scope signer, runner, and tracking-issue filer (rows 4.23-4.25).
 """
@@ -29,6 +32,7 @@ from purpleloop.runtime.nightly import (
     read_nightly_scope,
     render_issue_body,
     resolve_scenario,
+    verified_manifest,
 )
 from purpleloop.schemas.phase4 import NightlyScope, StochasticRunOutcome
 
@@ -199,3 +203,63 @@ def register(app: typer.Typer) -> None:
             body, run=gh_runner(gh), body_path=output_dir / "issue-body.md"
         )
         typer.echo(f"ISSUE {action} {reference}")
+
+    @app.command("retention-plan")
+    def retention_plan_command(
+        root: Path,
+        manifest: Path = NIGHTLY_MANIFEST,
+        public_key: Path = NIGHTLY_PUBLIC_KEY,
+        as_of: Annotated[
+            str | None, typer.Option(help="ISO date to resolve at (default: now, UTC)")
+        ] = None,
+        output: Path | None = None,
+    ) -> None:
+        """Dry run: which artifacts the signed retention rules would delete, and when."""
+        from datetime import UTC, datetime
+
+        from purpleloop.reporting.retention import retention_plan
+
+        try:
+            signed = verified_manifest(manifest, public_key)
+            if signed.phase4 is None:
+                raise ValueError("the signed manifest carries no retention rules (1.4+)")
+            moment = (
+                datetime.fromisoformat(as_of).replace(tzinfo=UTC) if as_of else datetime.now(UTC)
+            )
+            plan = retention_plan(root, signed.phase4, as_of=moment)
+        except (ManifestError, ValueError, OSError) as exc:
+            typer.echo(f"INVALID: {exc}", err=True)
+            raise typer.Exit(1) from None
+        if output is not None:
+            write_json(output, plan)
+        typer.echo(
+            f"DRY RUN as_of={plan['as_of']} files={plan['files']} due={plan['due']} "
+            "(nothing deleted)"
+        )
+        for kind, counts in plan["by_kind"].items():
+            typer.echo(
+                f"  {kind}: files={counts.get('files', 0)} bytes={counts.get('bytes', 0)} "
+                f"due={counts.get('due', 0)} held={counts.get('held', 0)}"
+            )
+
+    @app.command("locate-ledger-break")
+    def locate_ledger_break(ledger: Path) -> None:
+        """Name the first event at which a ledger's hash chain stops verifying."""
+        from purpleloop.reporting.incident_tools import first_ledger_break
+
+        result = first_ledger_break(ledger)
+        typer.echo(json.dumps(result, sort_keys=True))
+        if not result["valid"]:
+            raise typer.Exit(1)
+
+    @app.command("locate-action")
+    def locate_action_command(run: Path, digest: str) -> None:
+        """Where an action digest came from in a run bundle, and every event naming it."""
+        from purpleloop.reporting.incident_tools import locate_action
+
+        try:
+            result = locate_action(run, digest)
+        except (OSError, ValueError) as exc:
+            typer.echo(f"INVALID: {exc}", err=True)
+            raise typer.Exit(1) from None
+        typer.echo(json.dumps(result, indent=2, sort_keys=True))
