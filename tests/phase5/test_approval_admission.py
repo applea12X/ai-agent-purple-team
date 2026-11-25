@@ -380,11 +380,16 @@ def test_an_approval_expiring_mid_run_fails_closed_at_the_next_action(
 ) -> None:
     requested, _, report = approved_case
     # Shorter than the manifest's own two-hour window, so the approval is what expires.
-    approval = approve(governance, requested, report, ttl=timedelta(minutes=30))
+    # Pinned to this test's own instant: the manifest's window began when the fixture built it,
+    # which in a long suite run is well after this module's import-time NOW.
+    current = datetime.now(UTC)
+    approval = governance.approve(
+        requested, report, now=current - timedelta(minutes=1), ttl=timedelta(minutes=30)
+    )
     manifest = governance.approved(requested, approval)
     runner = governance.agent_runner(manifest, tmp_path, governance.admission([approval], [report]))
     runtime = runner.runtime
-    instant = [NOW]
+    instant = [current]
     runtime.clock = lambda: instant[0]
     from purpleloop.runtime.fixture import FixtureController
 
