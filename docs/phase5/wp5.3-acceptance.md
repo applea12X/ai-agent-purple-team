@@ -2,7 +2,7 @@
 
 Date: November 25, 2026
 
-Measured on branch `worktree-agent-a5503ba061923ea25` (from `phase-5` = `8f000e0`), on the same
+Measured on branch `worktree-agent-a5503ba061923ea25` (from `phase-5` = `8f000e0`, later merged with `phase-5` = `80db489`), on the same
 local macOS machine as WP5.0.1, with Docker Desktop running. Every number below comes from a
 command run in this session, and the command is written next to it. No model was called. Every
 run used the offline scripted provider and the in-process fixture.
@@ -86,10 +86,12 @@ recomputes every figure of a full-suite export from the ledger events directly.
 
 | Command | Result |
 | --- | --- |
-| `uv run ruff check . && uv run ruff format --check . && uv run mypy` | all checks passed; 231 files formatted; mypy: no issues in 95 source files |
-| `time uv run pytest tests/phase5 -q --no-cov` | **324 passed** in 198.05 s |
-| `uv run pytest tests/phase5/test_telemetry.py tests/phase5/test_telemetry_runs.py tests/phase5/test_analysis.py -q --no-cov` (the CI job) | FILLED-BELOW |
-| `uv run pytest --junitxml=artifacts/junit-wp5.3.xml` (full suite, under `nohup`) | FILLED-BELOW |
+| `uv run ruff check . && uv run ruff format --check . && uv run mypy` | before the merge: all checks passed, 231 files formatted, no issues in 95 source files; after: all checks passed, 251 files formatted, no issues in 105 source files |
+| `time uv run pytest tests/phase5 -q --no-cov`, before the merge | **324 passed** in 198.05 s |
+| `time uv run pytest tests/phase5/test_telemetry.py tests/phase5/test_telemetry_runs.py tests/phase5/test_analysis.py -q --no-cov` (the CI job's test step), after the `80db489` merge | **61 passed** in 76.09 s |
+| `uv run pytest --junitxml=artifacts/junit-wp5.3.xml` (full suite, under `nohup`), before the merge (tree `7dcc75b` plus this note) | **796 passed, 3 skipped**, 91.70% branch coverage, 1473.83 s (wall 1477 s) |
+| The same, after merging `phase-5` = `80db489` (tree `0004072`) | **902 passed, 3 skipped, 2 warnings** (a Starlette `httpx` deprecation from `fastapi.testclient`, not from this package), **91.93%** branch coverage, 1333.72 s (wall 1336 s) |
+| Coverage of this package's modules in that run | `reporting/telemetry.py` 95%, `reporting/analysis.py` 98%, `telemetry_cli.py` 92% |
 
 ## Defects found
 
