@@ -251,6 +251,17 @@ with the trust model stated at exactly its real strength. **No number produced o
 offline stand-in is presented as evidence about a real model**; the acceptance record says
 which runs have actually happened.
 
+## Phase 5 observability (WP5.3)
+
+Telemetry is a projection of the evidence ledger, never a second source of truth: spans and
+metrics are computed from redacted, persisted ledger events in the evidence writer, encoded as
+OTLP/JSON, and written by default to a local file (`uv run purpleloop observe-suite`). An
+optional collector profile (`compose.observability.yaml`) receives them only when a signed
+Manifest 1.5 names it. Telemetry is outside the trusted computing base, so a failing sink never
+changes an outcome; the failure is recorded in a separate status ledger (ADR 0016). Names are
+versioned in [the telemetry namespace](docs/telemetry-namespace.md). `uv run purpleloop analyze`
+turns verified bundles into Parquet and queries them with DuckDB, and refuses unverified ones.
+
 ## Documentation
 
 - [Product requirements and delivery plan](planning/PRD.md) and the

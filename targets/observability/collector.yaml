@@ -1,0 +1,31 @@
+# OpenTelemetry Collector configuration for the optional observability profile (WP5.3, ADR 0016).
+#
+# One receiver (OTLP/HTTP JSON from the harness's OtlpHttpExporter) and one exporter (a local
+# file). There is deliberately no network exporter: the collector is a sink on the fixture's
+# internal network, and nothing it receives leaves the machine.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  file:
+    path: /export/collector-spans.jsonl
+
+service:
+  telemetry:
+    metrics:
+      level: none
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [file]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [file]

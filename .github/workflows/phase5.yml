@@ -36,3 +36,25 @@ jobs:
         with:
           name: phase5-contracts-evidence
           path: artifacts/
+
+  # WP5.3 — ledger-derived telemetry and the analysis export. Telemetry tests only, offline, with a
+  # file sink and an in-test loopback stub collector; the compose collector profile is never
+  # started in CI (ADR 0016). The namespace document must match EventKind.
+  observability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - run: uv run purpleloop telemetry-namespace --check
+      - run: >-
+          uv run pytest tests/phase5/test_telemetry.py tests/phase5/test_telemetry_runs.py
+          tests/phase5/test_analysis.py --no-cov --junitxml=artifacts/junit-observability.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase5-observability-evidence
+          path: artifacts/

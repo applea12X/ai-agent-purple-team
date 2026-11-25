@@ -588,3 +588,33 @@ def test_telemetry_is_imported_only_by_the_reporting_and_cli_layers() -> None:
     for plane in ("adapters", "fixture", "runtime", "control", "scoring", "schemas"):
         for path in (package / plane).rglob("*.py"):
             assert not any("telemetry" in name for name in _imports(path)), path
+
+
+# --- 5.3.2 the collector profile ----------------------------------------------------------------
+
+
+def test_the_collector_profile_is_off_by_default_pinned_and_loopback_only() -> None:
+    import yaml
+
+    from purpleloop.telemetry_cli import COLLECTOR_PORT
+
+    compose = yaml.safe_load((ROOT / "compose.observability.yaml").read_text())
+    service = compose["services"]["otel-collector"]
+    assert service["profiles"] == ["observability"]  # never started by a plain `up`
+    image = service["image"]
+    assert image.startswith("otel/opentelemetry-collector-contrib:") and "@sha256:" in image
+    assert all(port.startswith("127.0.0.1:") for port in service["ports"])
+    assert int(service["ports"][0].split(":")[1]) == COLLECTOR_PORT
+    assert service["read_only"] is True and service["cap_drop"] == ["ALL"]
+    assert compose["networks"]["supportlab-isolated"]["internal"] is True
+    config = yaml.safe_load((ROOT / "targets" / "observability" / "collector.yaml").read_text())
+    assert set(config["exporters"]) == {"file"}  # nothing leaves the machine
+    for pipeline in config["service"]["pipelines"].values():
+        assert pipeline["exporters"] == ["file"]
+
+
+def test_no_ci_lane_starts_the_collector() -> None:
+    for workflow in (ROOT / ".github" / "workflows").glob("*.yml"):
+        text = workflow.read_text()
+        assert "compose.observability.yaml" not in text, workflow.name
+        assert "--collector-port" not in text, workflow.name
