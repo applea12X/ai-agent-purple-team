@@ -60,13 +60,27 @@ def register(app: typer.Typer) -> None:
         if subset_drift():
             typer.echo("FAILED: committed subset differs from its records", err=True)
             raise typer.Exit(1)
+        occupied = [
+            name
+            for name in names
+            if (output_dir / name).exists() and any((output_dir / name).iterdir())
+        ]
+        if occupied:
+            # A sealed bundle's inventory must match its directory, so a run never writes over
+            # an earlier one.
+            typer.echo(f"FAILED: output directory not empty for {occupied}", err=True)
+            raise typer.Exit(1)
         scenarios = committed_subset()
         _, report, truth = build_subset()
         failed = False
         for name in names:
-            summaries = asyncio.run(
-                run_subset(output_dir / name, scenarios, model=STAND_INS[name](), seed=seed)
-            )
+            try:
+                summaries = asyncio.run(
+                    run_subset(output_dir / name, scenarios, model=STAND_INS[name](), seed=seed)
+                )
+            except (OSError, ValueError, RuntimeError) as exc:
+                typer.echo(f"FAILED: {name}: {exc}", err=True)
+                raise typer.Exit(1) from None
             metrics = benchmark_metrics(
                 subset=SUBSET_DIR.name,
                 stand_in=name,
