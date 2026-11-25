@@ -53,7 +53,20 @@ Design: [ADR 0014](../adr/0014-shadow-mode-and-risk-approval.md). Contracts: the
 | `SCENARIOS_REMOVED` | the WP5.0.7 case (2/2 → 1/1) blocks; additions and new classes do not; an existing regression keeps `RISK_CLASS_REGRESSION`; the committed corpus is still `WITHIN_BASELINE`; removing one scenario from any of the 13 classes blocks | `tests/phase5/test_risk_class_scenarios_removed.py` → 4 passed |
 | Paired runs with the bounded attacker, unchanged | 25 of 25 agent scenarios `passed`, no policy, budget, or result denial in any ledger | `run_offline_scenario(path, out, attacker=True)` over the corpus (scratch script) |
 
-FULL_SUITE_PLACEHOLDER
+## Full suite
+
+| Tree | Command | Result |
+| --- | --- | --- |
+| `b529b11` (WP5.1 merged with `phase-5` = `80db489`) | `uv run pytest --junitxml=artifacts/junit-wp5.1.xml` under `/usr/bin/time -p` | **992 passed, 3 skipped**, 995 collected, **92.01%** branch coverage (floor 85%), **1235.76 s** wall (user 1173.02 s) |
+| `fb2dd8d` (before that merge) | same | 942 passed, 3 skipped, 91.79%, 1217.77 s wall |
+
+The 3 skips are in `tests/phase1/test_isolation.py`, `tests/phase2/test_supportlab_isolation.py`,
+and `tests/phase3/test_seed_materialize.py` — the container-gated tests; they were not run with
+`PURPLELOOP_CONTAINER_TESTS=1` here. No existing test under `tests/unit` … `tests/phase4` was
+edited, and the `phase0`–`phase4` workflow digests still match
+(`tests/phase5/test_phase5_cli_and_lanes.py`). The per-scenario regression pins
+(`baselines/regression-outcomes.json`) pass unchanged, so no deterministic outcome moved and
+nothing was re-pinned.
 
 ## The baseline and the keys, in plain words
 
