@@ -125,6 +125,12 @@ are scored by checks on state or responses. Every scenario declares `origin: aut
 | Phase 3 and 4 regression sanity | `uv run pytest -q -x --no-cov tests/phase4 tests/phase3` | 301 passed, 1 skipped in 312.33 s |
 | Full suite | `/usr/bin/time -p uv run pytest --junitxml=artifacts/junit-wp5.6.xml` | **785 passed, 3 skipped in 1,337.02 s** (real 1,339.32 s); **91.69% branch coverage** (floor 85%) |
 
+**Later (WP5.0.2, November 25, 2026).** The delimitation-blind row above was measured before the
+fixture enforced provenance beyond the email sink. After that fix (`d391f74`), the same command
+reports `defense_credited=6/6`, `replay_findings=0/6` for the delimitation-blind stand-in.
+`test_wp56_subset.py` now expects all six to be credited. See
+`docs/phase5/wp5.0-real-model-acceptance.md`.
+
 ### Plan §6, row 5.6
 
 | Checkpoint | Threshold | Measured |
