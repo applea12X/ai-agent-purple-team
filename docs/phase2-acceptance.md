@@ -124,6 +124,11 @@ Command: `make supportlab-demo`
 > also uses the in-process HTML-form driver, not an out-of-process Chromium child. So this record
 > holds no browser-lane emergency-stop figure. The open item is in `docs/phase5/loose-ends.md`.
 > The rest of this record is left as written.
+>
+> **Measured (November 25, 2026).** 1,000 trials per driver, each killed with a browser page
+> load in flight: p99 8.67 ms with the HTML-form driver and 119.26 ms with Playwright/Chromium
+> 145, every browser process gone after every stop, against the 2,000 ms ceiling. Method and
+> records: [wp5.0-loose-ends-2-acceptance.md](phase5/wp5.0-loose-ends-2-acceptance.md).
 
 ## Defects found and fixed during acceptance
 
