@@ -24,3 +24,8 @@ def register(app: typer.Typer) -> None:
             return
         for name, version in CONTRACT_VERSIONS:
             typer.echo(f"{name} {version}")
+
+    # WP5.6: ``benchmark-promote`` and ``benchmark-run``.
+    from purpleloop.benchmark_cli import register as register_benchmark
+
+    register_benchmark(app)
