@@ -233,3 +233,77 @@ def read_events() -> Callable[[Path], list[dict[str, Any]]]:
         return [json.loads(line) for line in lines]
 
     return read
+
+
+# --- WP5.0.8 / WP5.4 review fixtures --------------------------------------------------------
+#
+# Real offline bundles, generated once per session from the agent corpus (no model, no Ollama),
+# plus suites built from them. Tests copy them before use, so no test can alter another's input.
+
+REVIEW_SCENARIOS = ("agent-indirect-html", "agent-indirect-markdown")
+
+
+def _seal_suite(root: Path, members: dict[str, Path]) -> Path:
+    import shutil
+
+    from purpleloop.reporting.bundle import inventory, verify_bundle, write_json
+
+    root.mkdir()
+    for name, source in members.items():
+        shutil.copytree(source, root / name)
+    write_json(root / "suite.json", {"schema_version": "1.3.0", "scenarios": list(members)})
+    inventory(root, complete=True)
+    verify_bundle(root)
+    return root
+
+
+@pytest.fixture(scope="session")
+def review_bundles(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
+    import asyncio
+
+    from purpleloop.reporting.bundle import verify_bundle
+    from purpleloop.runtime.demo import ROOT
+
+    root = tmp_path_factory.mktemp("review-bundles")
+    bundles: dict[str, Path] = {}
+    for scenario_id in REVIEW_SCENARIOS:
+        directory = root / scenario_id
+        asyncio.run(
+            agent_cli.run_offline_scenario(
+                ROOT / "scenarios" / "agent" / f"{scenario_id}.yaml", directory
+            )
+        )
+        verify_bundle(directory)
+        bundles[scenario_id] = directory
+    bundles["suite"] = _seal_suite(
+        root / "suite", {name: bundles[name] for name in REVIEW_SCENARIOS}
+    )
+    first = bundles[REVIEW_SCENARIOS[0]]
+    bundles["repeated"] = _seal_suite(
+        root / "repeated", {f"{REVIEW_SCENARIOS[0]}-rep-{index}": first for index in range(2)}
+    )
+    return bundles
+
+
+@pytest.fixture
+def review_copy(tmp_path: Path, review_bundles: dict[str, Path]) -> Callable[[str], Path]:
+    """A private copy of one review bundle, under ``tmp_path/bundles``."""
+    import shutil
+
+    def copy(name: str) -> Path:
+        target = tmp_path / "bundles" / name
+        shutil.copytree(review_bundles[name], target)
+        return target
+
+    return copy
+
+
+@pytest.fixture
+def reviewer_key_file(tmp_path: Path) -> tuple[Path, Path]:
+    """A fresh reviewer key pair, outside any bundle: (private PEM, public PEM)."""
+    from purpleloop.review.adjudication import generate_reviewer_key
+
+    keys = tmp_path / "keys"
+    keys.mkdir()
+    generate_reviewer_key(keys / "reviewer.pem", keys / "reviewer-public.pem")
+    return keys / "reviewer.pem", keys / "reviewer-public.pem"

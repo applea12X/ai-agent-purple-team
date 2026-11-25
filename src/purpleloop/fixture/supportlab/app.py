@@ -22,6 +22,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+# The authored registry plus the WP5.6 benchmark subset's entries; one value per profile.
+from purpleloop.control.benchmark_tools import FIXTURE_DEFENSES as DEFENSES
 from purpleloop.control.phase2_tools import (
     DefenseArgs,
     EmptyArgs,
@@ -36,7 +38,6 @@ from purpleloop.control.phase2_tools import (
     TicketUpdateArgs,
     UserUpdateArgs,
 )
-from purpleloop.control.phase3_tools import COMBINED_DEFENSES as DEFENSES
 from purpleloop.fixture.supportlab import agent_seed, ui
 from purpleloop.fixture.supportlab import seed as seeding
 from purpleloop.fixture.supportlab.agent_api import (

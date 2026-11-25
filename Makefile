@@ -117,3 +117,16 @@ judge-report-networked:
 	uv run purpleloop judge-report --output-dir artifacts/judge-networked \
 		--judge-endpoint "$$PURPLELOOP_JUDGE_ENDPOINT" \
 		--judge-profile "$${PURPLELOOP_JUDGE_PROFILE:-openai-compatible}"
+
+# WP5.0.8 / WP5.4 review lane (phase5.yml job `review`).
+.PHONY: review-check
+review-check:
+	uv run pytest tests/phase5/test_review_adjudication.py tests/phase5/test_review_ui.py -s \
+		--cov-reset --cov=purpleloop.review --cov-branch --cov-report=term --cov-fail-under=85
+
+# WP5.6 benchmark subset (phase5.yml job `benchmark-subset`): check the committed subset against
+# its promotion records, then run it offline under both stand-ins, reported apart from the 48.
+.PHONY: benchmark-subset
+benchmark-subset:
+	uv run purpleloop benchmark-promote
+	uv run purpleloop benchmark-run --output-dir artifacts/benchmark
