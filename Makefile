@@ -117,3 +117,9 @@ judge-report-networked:
 	uv run purpleloop judge-report --output-dir artifacts/judge-networked \
 		--judge-endpoint "$$PURPLELOOP_JUDGE_ENDPOINT" \
 		--judge-profile "$${PURPLELOOP_JUDGE_PROFILE:-openai-compatible}"
+
+# WP5.0.8 / WP5.4 review lane (phase5.yml job `review`).
+.PHONY: review-check
+review-check:
+	uv run pytest tests/phase5/test_review_adjudication.py tests/phase5/test_review_ui.py -s \
+		--cov-reset --cov=purpleloop.review --cov-branch --cov-report=term --cov-fail-under=85

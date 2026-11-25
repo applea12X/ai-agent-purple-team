@@ -36,3 +36,32 @@ jobs:
         with:
           name: phase5-contracts-evidence
           path: artifacts/
+
+  # WP5.0.8 adjudication tooling and WP5.4 review UI: the CLI write path, the precision report's
+  # refusals, the UI's inert rendering over every corpus payload, blinding, local-only binding,
+  # and bundle bytes unchanged after a full adjudication session. Offline; no model, no labels
+  # from a human (every record in these tests is constructed by the test).
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - name: Assert the review lane holds no model credential
+        run: |
+          if [ -n "$PURPLELOOP_MODEL_API_KEY" ] || [ -n "$PURPLELOOP_MODEL_ENDPOINT" ]; then
+            echo "::error::model credentials must never reach the review lane"
+            exit 1
+          fi
+      - run: >-
+          uv run pytest tests/phase5/test_review_adjudication.py tests/phase5/test_review_ui.py
+          -s --cov-reset --cov=purpleloop.review --cov-branch --cov-report=term --cov-fail-under=85
+          --junitxml=artifacts/junit-review.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase5-review-evidence
+          path: artifacts/
