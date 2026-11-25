@@ -360,3 +360,8 @@ def register(app: typer.Typer) -> None:
             return
         typer.echo(f"REFUSED {decision.reason_code}")
         raise typer.Exit(1)
+
+    # WP5.6: ``benchmark-promote`` and ``benchmark-run``.
+    from purpleloop.benchmark_cli import register as register_benchmark
+
+    register_benchmark(app)

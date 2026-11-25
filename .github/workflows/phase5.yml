@@ -42,6 +42,12 @@ jobs:
   # and bundle bytes unchanged after a full adjudication session. Offline; no model, no labels
   # from a human (every record in these tests is constructed by the test).
   review:
+
+  # WP5.6 — the AgentDojo-style benchmark subset. Checks the committed scenarios are exactly what
+  # their hand-authored promotion records produce, then runs the subset offline under the scripted
+  # and delimitation-blind stand-ins and keeps the metrics as evidence. Reported apart from the
+  # authored 48; no model credential, no network. The tests also run in the contracts job above.
+  benchmark-subset:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -65,6 +71,20 @@ jobs:
         with:
           name: phase5-review-evidence
           path: artifacts/
+
+      - name: Assert the benchmark lane holds no model credential
+        run: |
+          if [ -n "$PURPLELOOP_MODEL_API_KEY" ] || [ -n "$PURPLELOOP_MODEL_ENDPOINT" ]; then
+            echo "::error::model credentials must never reach the benchmark lane"
+            exit 1
+          fi
+      - run: uv run purpleloop benchmark-promote
+      - run: uv run purpleloop benchmark-run --output-dir artifacts/benchmark
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase5-benchmark-subset
+          path: artifacts/benchmark/metrics-*.json
 
   # WP5.1 — shadow mode and risk approval. The governance tests (capability delta, admission,
   # shadow mode with its zero-dispatch measurement over every corpus, the model-driven attacker

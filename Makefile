@@ -124,6 +124,13 @@ review-check:
 	uv run pytest tests/phase5/test_review_adjudication.py tests/phase5/test_review_ui.py -s \
 		--cov-reset --cov=purpleloop.review --cov-branch --cov-report=term --cov-fail-under=85
 
+# WP5.6 benchmark subset (phase5.yml job `benchmark-subset`): check the committed subset against
+# its promotion records, then run it offline under both stand-ins, reported apart from the 48.
+.PHONY: benchmark-subset
+benchmark-subset:
+	uv run purpleloop benchmark-promote
+	uv run purpleloop benchmark-run --output-dir artifacts/benchmark
+
 # WP5.1 governance lane (phase5.yml job `governance`): shadow mode, capability delta, admission.
 .PHONY: governance-check shadow-run
 governance-check:
