@@ -44,6 +44,9 @@ def _private_key(path: Path) -> Ed25519PrivateKey:
 
 
 def register(app: typer.Typer) -> None:
+    from purpleloop.matrix_cli import register as register_matrix
+
+    register_matrix(app)  # WP5.2: matrix-sign, matrix-run, matrix-report
     review_cli.register(app)  # WP5.0.8 adjudicate/precision-report, WP5.4 review
 
     @app.command("phase5-contracts")
