@@ -159,6 +159,28 @@ validated against its typed argument model, compiled from a closed operation voc
 in trusted registry code, and executed one at a time by `SafetyRuntime` under the signed per-turn
 cap. An intent has no field that could name an adapter, a target, a credential, or a budget.
 
+## Phase 5: runaway-loop detection in the kernel
+
+PRD §7 asks the kernel to stop runaway loops, and until loose end 5.3 nothing did. Every earlier
+bound (plan node and depth limits, per-turn intent caps, attacker caps, budgets, wall time) caps
+how much a run does, but none notices that it keeps doing the same thing. `SafetyRuntime` now
+holds a `LoopGuard` (`control/loop_guard.py`). The guard runs right after admission, before
+policy, so it sees every target-plane action from every source: plan nodes, model intents, both
+attacker profiles, and matrix trials. Model and attacker attempts that the compiler refused or
+the adapter rejected reach it through `refused_step`.
+
+At each action boundary it fingerprints the action's canonical typed content, leaving out
+per-run identity. It keeps a per-stage state digest chained over the distinct outcomes the kernel
+has recorded. It stops the run on the N-th repetition of an action-state hash, refused before
+dispatch, or on the K-th consecutive action that changed nothing. A trip is a `POLICY` deny
+`RUNAWAY_LOOP_DETECTED` and latches the guard. Every later target-plane action is refused, the
+runner fails the run closed, and the control plane stays open so teardown runs. In shadow a
+would-be trip is only reported (`RUNAWAY_LOOP_WOULD_TRIP`, `ShadowReport.would_be_loops`).
+
+N and K are signed: `phase5.loop_guard` in manifest 1.5, or `EvaluationMatrix.loop_guard` for
+matrix trials on 1.3 manifests. Without a grant the guard is disarmed and records nothing, so no
+earlier outcome or pinned hash moves. See [ADR 0018](adr/0018-runaway-loop-detection.md).
+
 ## Diagrams
 
 These three diagrams were planned as WP4.5.2 and added in the Phase 5 loose-ends audit. They

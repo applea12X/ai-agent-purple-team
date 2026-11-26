@@ -141,3 +141,16 @@ The section above describes the contracts as they landed; WP5.1 closed the items
   `APPROVAL_AMBIGUOUS`, `APPROVAL_NOT_FOUND`, `APPROVAL_SHADOW_REPORT_MISSING`,
   `APPROVAL_BASELINE_MISMATCH`, `APPROVAL_SHADOW_NOT_THIS_SURFACE`, `APPROVAL_DELTA_MISMATCH`,
   `APPROVAL_ADMISSION_UNCONFIGURED`, `BASELINE_<signing reason>` (refused).
+
+## Loose end 5.3 additions (ADR 0018)
+
+- `LoopGuardGrant` (`repeat_limit` 2–64, `no_progress_limit` 1–256), carried by
+  `Phase5Grants.loop_guard` and `EvaluationMatrix.loop_guard`. Both default to `None` (the
+  detector is disarmed), so the 1.5 manifest and matrix 1.0 reference digests are unchanged.
+  `capability_delta` classifies the grant as `not-capability`.
+- `ShadowReport.would_be_loops` (`int >= 1` or `None`). It is absent when the walk had no
+  would-be loop, so the shadow-report 1.0 reference digest is unchanged. It is recomputed from
+  the ledger by `verify_shadow_bundle`.
+- Reason codes: `RUNAWAY_LOOP_DETECTED` (a `POLICY` deny, and the run's termination reason) and
+  `RUNAWAY_LOOP_WOULD_TRIP` (shadow, decision `would-deny`, event schema 1.2.0).
+- No `EventKind`, no new reference document, and no change to `baselines/schema-digests.json`.

@@ -129,7 +129,7 @@ One more value is used, because the audit found items that fit none of these:
 | # | Loose end | Source | Owner | Note |
 | --- | --- | --- | --- | --- |
 | 5.2 | Dry-run execution | PRD §7 Safety kernel | WP5.1.2 | Shadow mode. |
-| 5.3 | **Detect repeated or no-progress action-state hashes and stop runaway loops** | PRD §7 Safety kernel | open — unowned | No detector exists. Today loops are prevented by structure: plans are acyclic DAGs with signed node and depth limits, the attacker has attempt and depth caps, and budgets and wall time are hard. The requirement becomes live with the WP5.1.6 model-driven attacker and Phase 6 agents. No WP names it. |
+| 5.3 | **Detect repeated or no-progress action-state hashes and stop runaway loops** | PRD §7 Safety kernel | closed here (worker runaway-loop) | Confirmed absent at `425e8b2`: the existing caps bound how much a run does, not whether it repeats itself. `control/loop_guard.py`, owned by `SafetyRuntime`, hashes every target-plane action from every source (plan, model intent, refused or rejected intent, bounded and model-driven attacker, matrix trial) against a per-stage digest of the outcomes the kernel recorded. The N-th repetition is refused before dispatch, and the K-th consecutive no-progress action ends the run `RUNAWAY_LOOP_DETECTED`, latched, teardown run, audit-exported. Shadow only reports (`would_be_loops`). N/K are signed (`phase5.loop_guard`, `EvaluationMatrix.loop_guard`). Disarmed without a grant, so no pinned outcome moves. 25 agent scenarios armed at 2/4 equal their pins. [ADR 0018](../adr/0018-runaway-loop-detection.md), [acceptance](runaway-loop-acceptance.md), `tests/phase5/test_runaway_loop.py`. |
 | 5.4 | Rollback checks | PRD §7 Safety kernel | closed earlier | Reset verified by snapshot-hash equality before each leg (ADR 0005, `03f05e2`). |
 | 5.5 | OpenTelemetry event export | PRD §4 | WP5.3.1 | — |
 | 5.6 | DuckDB/Parquet analysis output | PRD §4, §5 | WP5.3.6 | — |
@@ -192,5 +192,4 @@ a separate worker.
 4. **4.23** The nightly lane has no browser workflow.
 5. **4.24** A nightly failure files no tracking issue.
 6. **4.25** The nightly scope is hard-coded, not read from the signed `nightly_scope`.
-7. **5.3** There is no no-progress or runaway-loop detector (PRD §7). It is structurally moot
-   today and becomes live with WP5.1.6 and Phase 6.
+7. **5.3** There is no no-progress or runaway-loop detector (PRD §7). **Closed** by worker runaway-loop: see row 5.3.
