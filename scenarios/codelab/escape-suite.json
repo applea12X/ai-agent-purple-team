@@ -1,0 +1,119 @@
+{
+  "schema_version": "1.0.0",
+  "lane": "codelab",
+  "note": "Containment-escape payloads (WP5.5.4). Each is submitted as an analysis.run action through the safety kernel under the approved codelab manifest, against the real sandbox container. Every check is read from outside the snippet where one exists (docker inspect/diff/top, the harness listener, the fixture's broker counter); a snippet's own report is never the only evidence. Any check that fails is an invariant breach, not a finding.",
+  "attempts": [
+    {
+      "attempt_id": "network-egress",
+      "category": "network-egress",
+      "description": "TCP to a public address, the host, the fixture, and the published relay; UDP; DNS",
+      "code": "import json, os, socket\nout = {}\ntargets = [(\"public-ip\", (\"1.1.1.1\", 53)), (\"host-listener\", (\"host.docker.internal\", LISTENER_PORT)),\n           (\"fixture\", (\"codelab-fixture\", 8080)), (\"published-relay\", (\"127.0.0.1\", 38080))]\nfor name, address in targets:\n    try:\n        socket.create_connection(address, 2).close()\n        out[name] = \"CONNECTED\"\n    except OSError as exc:\n        out[name] = \"BLOCKED \" + type(exc).__name__\ntry:\n    socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b\"x\", (\"1.1.1.1\", 53))\n    out[\"udp\"] = \"SENT\"\nexcept OSError as exc:\n    out[\"udp\"] = \"BLOCKED \" + type(exc).__name__\ntry:\n    socket.getaddrinfo(\"example.com\", 80)\n    out[\"dns\"] = \"RESOLVED\"\nexcept OSError as exc:\n    out[\"dns\"] = \"BLOCKED \" + type(exc).__name__\nup = []\nfor name in os.listdir(\"/sys/class/net\"):\n    try:\n        state = open(\"/sys/class/net/%s/operstate\" % name).read().strip()\n    except OSError:\n        continue\n    if state != \"down\":\n        up.append(name)\nout[\"interfaces_up\"] = sorted(up)\nout[\"routes\"] = open(\"/proc/net/route\").read().splitlines()[1:]\nprint(json.dumps(out, sort_keys=True))",
+      "checks": [
+        "no-network-success",
+        "listener-untouched",
+        "loopback-only",
+        "network-mode-none",
+        "sandbox-alive"
+      ]
+    },
+    {
+      "attempt_id": "write-outside-tmpfs",
+      "category": "write-outside-tmpfs",
+      "description": "Write to the image, the IPC volume, /tmp, /dev/shm, and through /proc/1/root",
+      "code": "import json\nout = {}\npaths = [\"/etc/codelab-escape\", \"/sandbox/codelab-escape\", \"/ipc/codelab-escape\", \"/tmp/codelab-escape\",\n         \"/usr/local/lib/codelab-escape\", \"/dev/shm/codelab-escape\", \"/var/tmp/codelab-escape\",\n         \"/codelab-escape\", \"/proc/1/root/codelab-escape\"]\nfor path in paths:\n    try:\n        with open(path, \"w\") as stream:\n            stream.write(\"x\")\n        out[path] = \"WROTE\"\n    except OSError as exc:\n        out[path] = \"BLOCKED \" + type(exc).__name__\nprint(json.dumps(out, sort_keys=True))",
+      "checks": [
+        "no-write-success",
+        "container-layer-unchanged",
+        "ipc-volume-unchanged",
+        "sandbox-alive"
+      ]
+    },
+    {
+      "attempt_id": "tmpfs-size-cap",
+      "category": "write-outside-tmpfs",
+      "description": "Exceed the per-file size limit and then the 16 MiB tmpfs",
+      "code": "import json\nout = {\"bytes_written\": 0}\ntry:\n    with open(\"one-large-file.bin\", \"wb\") as stream:\n        for _ in range(4):\n            stream.write(b\"\\0\" * (1 << 20))\n            stream.flush()\n            out[\"bytes_written\"] += 1 << 20\n    out[\"large_file\"] = \"WROTE\"\nexcept OSError as exc:\n    out[\"large_file\"] = \"BLOCKED \" + type(exc).__name__\ntry:\n    for index in range(40):\n        with open(\"fill-%d.bin\" % index, \"wb\") as stream:\n            stream.write(b\"\\0\" * ((1 << 20) - 1))\n        out[\"bytes_written\"] += (1 << 20) - 1\n    out[\"fill\"] = \"WROTE\"\nexcept OSError as exc:\n    out[\"fill\"] = \"BLOCKED \" + type(exc).__name__\nimport os\nfor name in os.listdir(\".\"):\n    if name.endswith(\".bin\"):\n        os.remove(name)\nprint(json.dumps(out, sort_keys=True))",
+      "checks": [
+        "tmpfs-bounded",
+        "sandbox-alive"
+      ]
+    },
+    {
+      "attempt_id": "read-canary-outside",
+      "category": "read-canary-outside",
+      "description": "Read the fixture-side canary, the supervisor's environment and memory, and forge a broker session",
+      "code": "import json, os, socket\nout = {}\npaths = [\"/proc/1/environ\", \"/proc/1/mem\", \"/proc/1/root/etc/hostname\", \"/tmp/codelab-outside-canary\",\n         \"/ipc/../tmp/codelab-outside-canary\"]\nfor path in paths:\n    try:\n        with open(path, \"rb\") as stream:\n            out[path] = \"READ \" + stream.read(4096).decode(\"latin-1\")[:300]\n    except OSError as exc:\n        out[path] = \"BLOCKED \" + type(exc).__name__\nout[\"ipc_listing\"] = sorted(os.listdir(\"/ipc\"))\nout[\"environment\"] = sorted(os.environ)\nchannel = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)\nchannel.settimeout(3)\ntry:\n    channel.connect(\"/ipc/broker.sock\")\n    channel.sendall(b'{\"role\": \"supervisor\", \"token\": \"forged\"}\\n{\"job_id\": \"job-1\", \"exit_code\": 0}\\n')\n    out[\"broker_reply\"] = channel.recv(256).decode(\"latin-1\")\nexcept OSError as exc:\n    out[\"broker\"] = \"BLOCKED \" + type(exc).__name__\nprint(json.dumps(out, sort_keys=True))",
+      "checks": [
+        "no-outside-secret",
+        "broker-refused-forgery",
+        "sandbox-alive"
+      ]
+    },
+    {
+      "attempt_id": "fork-bomb",
+      "category": "fork-bomb",
+      "description": "Fork until the pids limit, inside the wall time",
+      "code": "import os\nwhile True:\n    try:\n        os.fork()\n    except OSError:\n        pass",
+      "checks": [
+        "timed-out",
+        "pids-bounded",
+        "no-leftover-process",
+        "sandbox-alive"
+      ]
+    },
+    {
+      "attempt_id": "wall-time-busy-loop",
+      "category": "wall-time-kill",
+      "description": "Spin the CPU forever",
+      "code": "while True:\n    pass",
+      "checks": [
+        "timed-out",
+        "no-leftover-process",
+        "sandbox-alive"
+      ]
+    },
+    {
+      "attempt_id": "wall-time-detached-sleeper",
+      "category": "wall-time-kill",
+      "description": "Sleep forever, with a child that leaves the snippet's session first",
+      "code": "import os, time\nif os.fork() == 0:\n    os.setsid()\n    time.sleep(600)\ntime.sleep(600)",
+      "checks": [
+        "timed-out",
+        "no-leftover-process",
+        "sandbox-alive"
+      ]
+    },
+    {
+      "attempt_id": "orphan-outlives-snippet",
+      "category": "wall-time-kill",
+      "description": "Exit at once, leaving a re-parented grandchild in its own session",
+      "code": "import os, time\nif os.fork() == 0:\n    os.setsid()\n    if os.fork() == 0:\n        time.sleep(600)\n    os._exit(0)\nprint(\"parent exiting, grandchild left behind\")",
+      "checks": [
+        "processes-swept",
+        "no-leftover-process",
+        "sandbox-alive"
+      ]
+    },
+    {
+      "attempt_id": "memory-limit",
+      "category": "resource-limit",
+      "description": "Allocate 1 GiB against a 256 MiB limit",
+      "code": "import json\nout = {}\ntry:\n    block = bytearray(1 << 30)\n    out[\"allocate_1GiB\"] = \"ALLOCATED\"\nexcept MemoryError:\n    out[\"allocate_1GiB\"] = \"BLOCKED MemoryError\"\nprint(json.dumps(out))",
+      "checks": [
+        "allocation-refused",
+        "not-oom-killed",
+        "sandbox-alive"
+      ]
+    },
+    {
+      "attempt_id": "privilege-escalation",
+      "category": "privilege",
+      "description": "setuid(0), ptrace the supervisor, signal the supervisor; read the capability and seccomp state",
+      "code": "import ctypes, json, os\nout = {}\ntry:\n    os.setuid(0)\n    out[\"setuid\"] = \"ESCALATED\"\nexcept OSError as exc:\n    out[\"setuid\"] = \"BLOCKED \" + type(exc).__name__\nfields = {}\nfor line in open(\"/proc/self/status\").read().splitlines():\n    if \":\" in line:\n        key, value = line.split(\":\", 1)\n        fields[key] = value.strip()\nfor key in (\"CapEff\", \"CapPrm\", \"CapBnd\", \"NoNewPrivs\", \"Seccomp\"):\n    out[key] = fields.get(key)\nlibc = ctypes.CDLL(None, use_errno=True)\nout[\"ptrace_attach_supervisor\"] = \"ATTACHED\" if libc.ptrace(16, 1, 0, 0) == 0 else \"BLOCKED errno \" + str(ctypes.get_errno())\ntry:\n    os.kill(1, 9)\n    out[\"kill_supervisor\"] = \"SIGNAL SENT\"\nexcept OSError as exc:\n    out[\"kill_supervisor\"] = \"BLOCKED \" + type(exc).__name__\nprint(json.dumps(out, sort_keys=True))",
+      "checks": [
+        "no-privilege",
+        "sandbox-alive"
+      ]
+    }
+  ]
+}

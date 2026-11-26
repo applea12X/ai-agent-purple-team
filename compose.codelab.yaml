@@ -32,6 +32,8 @@ services:
     # harness records what Docker actually used from `docker inspect`, not this variable.
     runtime: ${CODELAB_SANDBOX_RUNTIME:-runc}
     network_mode: none
+    # A private IPC namespace with no /dev/shm: the tmpfs below is the only writable path.
+    ipc: none
     read_only: true
     tmpfs: ["/scratch:size=16m,mode=0700,uid=10003,gid=10003"]
     cap_drop: [ALL]

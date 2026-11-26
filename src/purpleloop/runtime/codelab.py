@@ -371,7 +371,11 @@ def build_codelab_runner(
     )
     secrets_to_redact = (control, *actor_tokens.values(), canary_for(seed))
     if isinstance(fixture, ComposeCodelab):  # pragma: no cover - container lane
-        secrets_to_redact = (*secrets_to_redact, fixture.outside_canary)
+        secrets_to_redact = (
+            *secrets_to_redact,
+            fixture.outside_canary,
+            fixture.environment["CODELAB_SANDBOX_TOKEN"],
+        )
     runtime = SafetyRuntime(
         verifier=verifier,
         policy=DefaultDenyPolicy(lane.tools),

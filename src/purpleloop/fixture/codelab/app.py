@@ -407,6 +407,10 @@ def create_apps(state: CodelabState) -> tuple[FastAPI, FastAPI]:
                 "alive": state.alive,
                 "engine": "memory",
                 "sandbox": state.sandbox.runtime,
+                # Connections to the sandbox broker that did not authenticate (container only).
+                "sandbox_rejected_connections": int(
+                    getattr(state.sandbox, "rejected_connections", 0)
+                ),
             }
         )
 
