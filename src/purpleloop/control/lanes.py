@@ -13,12 +13,28 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
-from purpleloop.control import phase2_tools, phase3_tools
+from purpleloop.control import phase2_tools, phase3_tools, phase5_tools
 from purpleloop.control.actors import ActorBinding
 from purpleloop.control.phase1_tools import PHASE1_TOOLS
 from purpleloop.control.tools import ToolRegistry
 from purpleloop.fixture.app import DEFENSES as PHASE1_DEFENSES
+from purpleloop.schemas.common import StrictModel
 from purpleloop.schemas.phase1 import Phase1Scenario
+
+
+@dataclass(frozen=True)
+class IntentVocabulary:
+    """A lane's closed model-intent vocabulary (WP5.5).
+
+    ``model`` validates one raw intent (it must expose ``operation``, ``resource_id``, and
+    ``arguments``), ``adapters`` maps each operation to the adapter that executes it, and
+    ``operations`` is the set an agent task may declare. A lane without one uses the agent lane's
+    (``phase3_tools``), which is every lane before Phase 5, so their behavior is unchanged.
+    """
+
+    model: type[StrictModel]
+    adapters: Mapping[str, str]
+    operations: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -50,6 +66,8 @@ class LaneContract:
     requires_phase2: bool = False
     requires_phase3: bool = False
     control_calls_per_run: int = 15
+    #: ``None`` keeps the agent lane's intent vocabulary (every lane before WP5.5).
+    intents: IntentVocabulary | None = None
 
 
 def _phase1_seed_arguments(scenario: Phase1Scenario) -> dict[str, Any]:
@@ -148,7 +166,9 @@ AGENT_LANE = LaneContract(
     ),
     actors=phase3_tools.AGENT_ACTORS,
     cross_tenant_operations=phase3_tools.AGENT_CROSS_TENANT_OPERATIONS,
-    manifest_versions=frozenset({"1.3.0"}),
+    # 1.5 (WP5.1) is the agent lane plus Phase 4 and Phase 5 grants. A 1.5 manifest is admitted
+    # only through capability admission (control.approvals); 1.3 is unchanged.
+    manifest_versions=frozenset({"1.3.0", "1.5.0"}),
     scenario_versions=frozenset({"1.3.0"}),
     seed_arguments=_agent_seed_arguments,
     # A model call adds latency the API lane does not have; the constant is reported, never tuned
@@ -158,6 +178,43 @@ AGENT_LANE = LaneContract(
     flows=phase2_tools.FLOWS,
     requires_phase2=True,
     requires_phase3=True,
+)
+
+
+def _codelab_seed_arguments(scenario: Phase1Scenario) -> dict[str, Any]:
+    return {"seed": scenario.fixture_seed, "scenario_id": scenario.scenario_id}
+
+
+#: WP5.5, ADR 0015. A second fixture with a contained code-execution surface. It admits only
+#: manifest 1.5 -- so every codelab run passes capability admission and needs a signed risk
+#: approval for its delta (``code-exec`` among it) -- and only Scenario 1.4 with ``lane: codelab``.
+CODELAB_LANE = LaneContract(
+    name=phase5_tools.LANE,
+    tools=phase5_tools.CODELAB_TOOLS,
+    defenses=phase5_tools.CODELAB_DEFENSES,
+    data_asset_id=phase5_tools.DATA_ASSET,
+    control_asset_id=phase5_tools.CONTROL_ASSET,
+    control_credential_handle=phase5_tools.CONTROL_HANDLE,
+    expected_assets=MappingProxyType(
+        {
+            phase5_tools.DATA_ASSET: phase5_tools.DATA_PORT,
+            phase5_tools.CONTROL_ASSET: phase5_tools.CONTROL_PORT,
+        }
+    ),
+    actors=phase5_tools.ACTORS,
+    cross_tenant_operations=frozenset(),
+    manifest_versions=frozenset({"1.5.0"}),
+    scenario_versions=frozenset({"1.4.0"}),
+    seed_arguments=_codelab_seed_arguments,
+    # A snippet run adds a sandbox round trip to each tool call; reported, never tuned to fit.
+    calibration=ResourceCalibration(0.01, 0.0, 0.12),
+    requires_phase2=True,
+    requires_phase3=True,
+    intents=IntentVocabulary(
+        model=phase5_tools.CodelabIntent,
+        adapters=MappingProxyType(phase5_tools.INTENT_ADAPTERS),
+        operations=phase5_tools.INTENT_OPERATIONS,
+    ),
 )
 
 LANES: MappingProxyType[str, LaneContract] = MappingProxyType(

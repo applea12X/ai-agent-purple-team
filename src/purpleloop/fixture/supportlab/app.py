@@ -22,6 +22,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+# The authored registry plus the WP5.6 benchmark subset's entries; one value per profile.
+from purpleloop.control.benchmark_tools import FIXTURE_DEFENSES as DEFENSES
 from purpleloop.control.phase2_tools import (
     DefenseArgs,
     EmptyArgs,
@@ -36,10 +38,13 @@ from purpleloop.control.phase2_tools import (
     TicketUpdateArgs,
     UserUpdateArgs,
 )
-from purpleloop.control.phase3_tools import COMBINED_DEFENSES as DEFENSES
 from purpleloop.fixture.supportlab import agent_seed, ui
 from purpleloop.fixture.supportlab import seed as seeding
-from purpleloop.fixture.supportlab.agent_api import Helpers, register_agent_routes
+from purpleloop.fixture.supportlab.agent_api import (
+    Helpers,
+    register_agent_routes,
+    retrieval_tainted,
+)
 from purpleloop.fixture.supportlab.database import Database, SqliteDatabase
 from purpleloop.fixture.supportlab.upstream import FEEDS, TARGETS, create_upstream_app
 from purpleloop.schemas.common import digest_data
@@ -208,6 +213,17 @@ def create_apps(state: SupportlabState) -> tuple[FastAPI, FastAPI]:
         orgs = ",".join(sorted({str(item["org_id"]) for item in users}))
         return {"count": len(users), "orgs": orgs, "users": users}, False
 
+    def steered(user: dict[str, Any]) -> bool:
+        """``retrieval-provenance-guard`` at a privileged workflow sink (see ``agent_api``).
+
+        True when the guard is on and the actor's current assistant run read untrusted content:
+        an unapproved refund or export it then asks for is refused by the application, whatever
+        the model was told. Gated on provenance, so it stays distinct from ``workflow-approval``,
+        which refuses an unapproved request unconditionally. The flag is checked first, so the
+        API and browser lanes, which never set it, never consult the agent tables.
+        """
+        return state.flag("retrieval_provenance") and retrieval_tainted(db, user)
+
     def create_refund(
         operation: str, user: dict[str, Any], ticket_id: str, args: RefundArgs
     ) -> tuple[dict[str, Any], bool]:
@@ -223,7 +239,7 @@ def create_apps(state: SupportlabState) -> tuple[FastAPI, FastAPI]:
             else None
         )
         approved = bool(approval and approval["amount"] == args.amount)
-        denied = not approved and state.flag("workflow_approval")
+        denied = not approved and (state.flag("workflow_approval") or steered(user))
         refund_id = None
         if not denied:
             tick = int(db.meta("tick") or "0") + 1
@@ -269,7 +285,7 @@ def create_apps(state: SupportlabState) -> tuple[FastAPI, FastAPI]:
             else None
         )
         approved = approval is not None
-        denied = not approved and state.flag("workflow_approval")
+        denied = not approved and (state.flag("workflow_approval") or steered(user))
         if not denied:
             tick = int(db.meta("tick") or "0") + 1
             db.execute(

@@ -28,6 +28,7 @@ from purpleloop.adapters.offline_model import OfflineModelStore
 from purpleloop.adapters.phase1 import AdapterRegistry, ChatAdapter, HttpAdapter, ToolAdapter
 from purpleloop.adapters.scripted_model import ScriptedAgentModel
 from purpleloop.control import phase2_tools, phase3_tools
+from purpleloop.control.approvals import ApprovalAdmission
 from purpleloop.control.budgets import BudgetLedger
 from purpleloop.control.credentials import InMemoryCredentialBroker
 from purpleloop.control.kill_switch import KillSwitch
@@ -53,6 +54,7 @@ from purpleloop.schemas.authorization import (
 )
 from purpleloop.schemas.phase2 import OwnershipScope, Phase2Grants
 from purpleloop.schemas.phase3 import DecodingParameters, ModelPin, Phase3Grants
+from purpleloop.schemas.phase5 import LoopGuardGrant
 from purpleloop.scoring.judge import HybridJudge, ScriptedJudge
 
 MODEL_FIXTURE = ROOT / "scenarios" / "supportlab" / "model-responses.json"
@@ -141,6 +143,10 @@ def supportlab_agent_manifest(
     model_endpoint: str | None = None,
     model_pin: ModelPin | None = None,
     judge: bool = False,
+    judge_pin: ModelPin | None = None,
+    cost_microusd_budget: int = 1_000_000,
+    token_budget: int = 200_000,
+    wall_time_seconds: float | None = None,
 ) -> AuthorizationManifest:
     """Manifest 1.3 for the agent lane.
 
@@ -148,6 +154,9 @@ def supportlab_agent_manifest(
     grant is the control, and the scripted provider has nowhere to go. Passing ``model_endpoint``
     and a networked ``model_pin`` opens the model plane for the stochastic lane; the target assets
     stay loopback either way, which the schema enforces (ADR 0008).
+
+    ``judge_pin`` replaces the scripted judge's pin (a networked judge), and the budgets are the
+    signed caps a hosted run is held to. Every default reproduces the earlier manifest exactly.
     """
     base = supportlab_manifest(key, seed=seed, now=now)
     pin = model_pin or ModelPin(
@@ -165,7 +174,7 @@ def supportlab_agent_manifest(
         expected_input_tokens_per_call=418,
         expected_output_tokens_per_call=27,
     )
-    judge_pin = ModelPin(
+    judge_pin = judge_pin or ModelPin(
         pin_id=JUDGE_PIN,
         provider="offline",
         model_id="supportlab-scripted-judge",
@@ -184,12 +193,12 @@ def supportlab_agent_manifest(
                 model_assets=frozenset({model_endpoint} if model_endpoint else ()),
                 model_credential_handle="supportlab-model",
                 model_pins=pins,
-                token_budget=200_000,
-                cost_microusd_budget=1_000_000,
+                token_budget=token_budget,
+                cost_microusd_budget=cost_microusd_budget,
                 max_agent_steps=8,
                 max_tool_intents_per_turn=4,
                 judge_enabled=judge,
-                judge_model_pin=JUDGE_PIN if judge else None,
+                judge_model_pin=judge_pin.pin_id if judge else None,
             ),
             "allowed_adapters": frozenset({"http", "tool", "chat", "browser", "control", "agent"}),
             "allowed_operations": operations,
@@ -201,8 +210,13 @@ def supportlab_agent_manifest(
                 update={
                     "requests": 600,
                     "records": 600,
-                    "tokens": 200_000,
-                    "cost_microusd": 1_000_000,
+                    "tokens": token_budget,
+                    "cost_microusd": cost_microusd_budget,
+                    **(
+                        {"wall_time_seconds": wall_time_seconds}
+                        if wall_time_seconds is not None
+                        else {}
+                    ),
                 }
             ),
         }
@@ -299,8 +313,16 @@ def build_supportlab_runner(
     lane: LaneContract = SUPPORTLAB_LANE,
     model_provider: Provider | None = None,
     model_pin_id: str = OFFLINE_PIN,
+    model_timeout_seconds: float | None = None,
+    admission: ApprovalAdmission | None = None,
+    loop_guard: LoopGuardGrant | None = None,
     **runner_options: Any,
 ) -> PurpleTeamRunner:
+    """``model_timeout_seconds``, when given, replaces the per-call model timeout and the agent
+    adapter's per-turn timeout (30 s and 20 s by default). The evaluation matrix sets it from a
+    row's signed per-call expectation, so a slow pin is not excluded by a constant written for a
+    fast one; every other caller leaves it unset and gets exactly the earlier timeouts.
+    """
     transports = fixture.transports
     http = HttpAdapter(transports=transports, tools=lane.tools)
     tool = ToolAdapter(transports=transports, tools=lane.tools)
@@ -343,13 +365,17 @@ def build_supportlab_runner(
             },
             budgets=budgets,
         )
-        adapters["agent"] = AgentAdapter(
+        agent = AgentAdapter(
             model,
             pin_id=model_pin_id,
             tools=lane.tools,
             transports=transports,
             max_intents=manifest.phase3.max_tool_intents_per_turn,
         )
+        if model_timeout_seconds is not None:
+            model.timeout = model_timeout_seconds
+            agent.timeout = model_timeout_seconds
+        adapters["agent"] = agent
         definitions.extend(phase3_tools.AGENT_DEFINITIONS)
     registry = AdapterRegistry(
         tuple(
@@ -376,6 +402,8 @@ def build_supportlab_runner(
         ),
         adapter=registry,
         ledger=EvidenceLedger(output_dir / "evidence.jsonl"),
+        admission=admission,
+        loop_guard=loop_guard,
     )
     return PurpleTeamRunner(
         runtime, close=fixture.close, lane=lane, browser=browser, **runner_options

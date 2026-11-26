@@ -1,0 +1,11 @@
+{
+  "gap_reason": "",
+  "matching": 5,
+  "mismatched_repetitions": [],
+  "model_pin_id": "networked",
+  "n": 5,
+  "rate": 1.0,
+  "scenario_id": "agent-indirect-inter-agent",
+  "schema_version": "1.4.0",
+  "seed_policy": "model-seed-1042-plus-repetition-index"
+}

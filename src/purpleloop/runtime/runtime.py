@@ -8,9 +8,22 @@ from typing import cast
 from pydantic import computed_field
 
 from purpleloop.adapters.base import Adapter, AdapterResult, SubresourceDenied
+from purpleloop.control.approvals import AdmissionDecision, ApprovalAdmission, ApprovalRefused
 from purpleloop.control.budgets import BudgetError, BudgetLedger, Reservation
 from purpleloop.control.credentials import CredentialBroker
 from purpleloop.control.kill_switch import KernelState, KernelStopped, KillSwitch
+from purpleloop.control.loop_guard import (
+    CONTROL_ADAPTER,
+    RUNAWAY_LOOP_DETECTED,
+    RUNAWAY_LOOP_WOULD_TRIP,
+    LoopGuard,
+    LoopTrip,
+    action_fingerprint,
+    outcome_digest,
+    rejected_fingerprint,
+    step_fingerprint,
+    stricter_grant,
+)
 from purpleloop.control.manifest import ManifestError, ManifestVerifier
 from purpleloop.control.policy import PolicyEngine
 from purpleloop.control.redaction import Redactor
@@ -24,7 +37,9 @@ from purpleloop.runtime.ledger import EvidenceLedger
 from purpleloop.schemas.action import ActionRequest, ActionTarget, BudgetRequest, TargetObservation
 from purpleloop.schemas.authorization import AuthorizationManifest
 from purpleloop.schemas.common import StrictModel, digest_data
-from purpleloop.schemas.event import EventKind, EvidenceEvent
+from purpleloop.schemas.event import SHADOW_EVENT_SCHEMA, EventKind, EvidenceEvent
+from purpleloop.schemas.phase1 import Step
+from purpleloop.schemas.phase5 import LoopGuardGrant
 
 
 class BoundaryDenied(RuntimeError):
@@ -78,6 +93,9 @@ class SafetyRuntime:
         adapter: Adapter,
         ledger: EvidenceLedger,
         clock: Callable[[], datetime] | None = None,
+        shadow: bool = False,
+        admission: ApprovalAdmission | None = None,
+        loop_guard: LoopGuardGrant | None = None,
     ) -> None:
         self.verifier = verifier
         self.policy = policy
@@ -88,6 +106,19 @@ class SafetyRuntime:
         self.adapter = adapter
         self.ledger = ledger
         self.clock = clock or (lambda: datetime.now(UTC))
+        #: Shadow mode (WP5.1): decide every action in full and dispatch none. Either this flag or
+        #: a shadow manifest puts the runtime in shadow; nothing can take it out again for a run.
+        self.shadow = shadow
+        #: Capability-increase admission for manifest 1.5 (``control.approvals``). Without it, a
+        #: 1.5 manifest is refused: an unconfigured check is not a passed check.
+        self.admission = admission
+        #: The runaway-loop detector (ADR 0018), one per signed manifest digest. Disarmed -- and
+        #: silent -- unless the manifest signs ``phase5.loop_guard``.
+        self._loop_guards: dict[str, LoopGuard] = {}
+        #: Thresholds from another signed document the host verified before building this
+        #: runtime -- the evaluation matrix spec, whose trials run on manifests 1.3 that cannot
+        #: carry the grant. Combined with a manifest grant by taking the stricter of each limit.
+        self.host_loop_guard = loop_guard
         self.scenario_id: str | None = None
         self.scenario_version: str | None = None
         self.stage: str | None = None
@@ -109,6 +140,8 @@ class SafetyRuntime:
 
         try:
             self.verifier.verify(manifest, now=self.clock())
+            if manifest.phase5 is not None:
+                self._admit_capabilities(manifest)
         except ManifestError as exc:
             event = self._record(
                 run_id,
@@ -125,6 +158,18 @@ class SafetyRuntime:
                 status="denied", reason_code=exc.reason_code, event_hashes=(event.event_hash or "",)
             )
 
+        guard = self.loop_guard(manifest, digest=manifest_digest)
+        # Every target-plane action from every source -- plan node, model intent, attacker
+        # proposal -- reaches this line. The control plane is exempt (``CONTROL_ADAPTER``).
+        watched = guard.armed and action.adapter != CONTROL_ADAPTER
+        fingerprint = action_fingerprint(action) if watched else ""
+        if watched:
+            refused = self._loop_boundary(
+                guard, fingerprint, manifest, run_id, trace_id, manifest_digest, action_digest
+            )
+            if refused is not None:
+                return refused
+
         decision = self.policy.evaluate(manifest, action)
         policy_event = self._record(
             run_id,
@@ -140,6 +185,10 @@ class SafetyRuntime:
         )
         event_hashes.append(policy_event.event_hash or "")
         if not decision.permitted:
+            if watched and not self.is_shadow(manifest):
+                self._loop_outcome(
+                    guard, None, run_id, trace_id, manifest_digest, action_digest, event_hashes
+                )
             return RuntimeResult(
                 status="denied",
                 reason_code=decision.reason_code,
@@ -161,8 +210,47 @@ class SafetyRuntime:
                 effective_redactor,
             )
 
+        if self.is_shadow(manifest):
+            # Shadow: admission, policy, kill switch, and the budget reservation above all ran
+            # exactly as for an execution. The adapter is never reached because nothing here
+            # dispatches to it -- there is no task, no credential resolution, no target guard.
+            # The reservation is finalized as consumed, so a shadow run exhausts its budget
+            # where an execution would have.
+            try:
+                event = self._record(
+                    run_id,
+                    trace_id,
+                    EventKind.SHADOW_SUPPRESSED,
+                    manifest_digest,
+                    decision.policy_digest,
+                    action_digest,
+                    "suppressed",
+                    "SHADOW_SUPPRESSED",
+                    {
+                        "would_apply": decision.effect.value,
+                        "policy_reason": decision.reason_code,
+                        "adapter": action.adapter,
+                        "operation": action.operation,
+                        "side_effect": action.side_effect.value,
+                        "budget": action.budget.model_dump(mode="json"),
+                    },
+                    redactor=effective_redactor,
+                    schema_version=SHADOW_EVENT_SCHEMA,
+                )
+            finally:
+                await self.budgets.finalize(reservation)
+            event_hashes.append(event.event_hash or "")
+            return RuntimeResult(
+                status="suppressed",
+                reason_code="SHADOW_SUPPRESSED",
+                event_hashes=tuple(event_hashes),
+            )
+
         next_hop = 0
         detail: str | None = None
+        #: Whether this outcome counts toward the no-progress check. A stopped kernel or a
+        #: manifest that stopped verifying ends the run on its own and is not a loop.
+        loop_counted = False
 
         async def authorize_subresource(observation: TargetObservation) -> None:
             """Route-level origin authorization for a browser subresource.
@@ -312,6 +400,8 @@ class SafetyRuntime:
         async def adapter_activity() -> AdapterResult:
             nonlocal effective_redactor
             self.verifier.verify(manifest, now=self.clock())
+            if manifest.phase5 is not None:
+                self._admit_capabilities(manifest)
             latest_decision = self.policy.evaluate(manifest, action)
             if not latest_decision.permitted:
                 raise BoundaryDenied(latest_decision.reason_code)
@@ -359,6 +449,20 @@ class SafetyRuntime:
                 redactor=effective_redactor,
             )
             event_hashes.append(event.event_hash or "")
+            if watched:
+                # The action completed and its result stands; a no-progress trip here latches
+                # the guard so the run's next target-plane action is refused.
+                self._loop_outcome(
+                    guard,
+                    outcome_digest(
+                        fingerprint, action.side_effect, safe_result.status, safe_result.data
+                    ),
+                    run_id,
+                    trace_id,
+                    manifest_digest,
+                    action_digest,
+                    event_hashes,
+                )
             return RuntimeResult(
                 status="completed",
                 reason_code="COMPLETED",
@@ -393,6 +497,7 @@ class SafetyRuntime:
                 else "failed"
             )
             kind = EventKind.RESULT
+            loop_counted = not isinstance(exc, (KernelStopped, ManifestError))
             if status == "failed":
                 detail = effective_redactor.redact(failure_detail(exc))
         finally:
@@ -412,12 +517,220 @@ class SafetyRuntime:
             redactor=effective_redactor,
         )
         event_hashes.append(event.event_hash or "")
+        if watched and loop_counted:
+            # Denied by the target guard or failed at execution: nothing changed. Cancellation,
+            # wall time, a stopped kernel, and an invalid manifest end the run on their own.
+            self._loop_outcome(
+                guard, None, run_id, trace_id, manifest_digest, action_digest, event_hashes
+            )
         return RuntimeResult(
             status=status,
             reason_code=reason_code,
             event_hashes=tuple(event_hashes),
             detail=detail,
         )
+
+    def loop_guard(
+        self, manifest: AuthorizationManifest, *, digest: str | None = None
+    ) -> LoopGuard:
+        """The runaway-loop detector for ``manifest``, armed only by its signed grant."""
+        digest = digest or manifest.manifest_digest()
+        guard = self._loop_guards.get(digest)
+        if guard is None:
+            signed = manifest.phase5.loop_guard if manifest.phase5 is not None else None
+            guard = self._loop_guards[digest] = LoopGuard(
+                stricter_grant(signed, self.host_loop_guard)
+            )
+        return guard
+
+    @property
+    def loop_tripped(self) -> bool:
+        """True once any detector of this runtime has latched: the run must end."""
+        return any(guard.tripped is not None for guard in self._loop_guards.values())
+
+    def refused_step(
+        self,
+        manifest: AuthorizationManifest,
+        step: Step | str,
+        reason: str,
+        *,
+        run_id: str,
+        trace_id: str,
+    ) -> bool:
+        """Count a model- or attacker-originated attempt that never became an action.
+
+        ``step`` is a typed step the plan compiler refused, or the name of a tool intent the
+        agent adapter rejected before it was typed at all. Either is still an action boundary: a
+        model that asks for the same forbidden tool call turn after turn is the commonest
+        runaway loop, and it never reaches :meth:`run`. True when the detector has latched and
+        the run must end.
+        """
+        guard = self.loop_guard(manifest)
+        if not guard.armed:
+            return False
+        shadow = self.is_shadow(manifest)
+        if guard.tripped is not None and not shadow:
+            return True
+        fingerprint = (
+            step_fingerprint(step) if isinstance(step, Step) else rejected_fingerprint(step)
+        )
+        trip = guard.boundary(fingerprint, self.stage)
+        if trip is None and not shadow:
+            trip = guard.observe(None)
+        if trip is None:
+            return False
+        self._record_trip(
+            trip,
+            run_id,
+            trace_id,
+            manifest.manifest_digest(),
+            step.digest() if isinstance(step, Step) else fingerprint,
+            shadow=shadow,
+            extra={"refused": reason[:64]},
+        )
+        if shadow:
+            return False
+        guard.latch(trip)
+        return True
+
+    def _loop_boundary(
+        self,
+        guard: LoopGuard,
+        fingerprint: str,
+        manifest: AuthorizationManifest,
+        run_id: str,
+        trace_id: str,
+        manifest_digest: str,
+        action_digest: str,
+    ) -> RuntimeResult | None:
+        """Refuse a latched run's action, or this action if it is the N-th repetition.
+
+        In shadow nothing is refused: a would-be trip is recorded and the walk goes on.
+        """
+        shadow = self.is_shadow(manifest)
+        trip = guard.tripped if not shadow else None
+        latched = trip is not None
+        if trip is None:
+            trip = guard.boundary(fingerprint, self.stage)
+            if trip is None:
+                return None
+        event = self._record_trip(
+            trip,
+            run_id,
+            trace_id,
+            manifest_digest,
+            action_digest,
+            shadow=shadow,
+            extra={"latched": True} if latched else None,
+        )
+        if shadow:
+            return None
+        guard.latch(trip)
+        return RuntimeResult(
+            status="denied",
+            reason_code=RUNAWAY_LOOP_DETECTED,
+            event_hashes=(event.event_hash or "",),
+        )
+
+    def _loop_outcome(
+        self,
+        guard: LoopGuard,
+        outcome: str | None,
+        run_id: str,
+        trace_id: str,
+        manifest_digest: str,
+        action_digest: str,
+        event_hashes: list[str],
+    ) -> None:
+        """Record what the action last counted changed; latch on the K-th unchanged one."""
+        trip = guard.observe(outcome)
+        if trip is None:
+            return
+        guard.latch(trip)
+        event = self._record_trip(
+            trip, run_id, trace_id, manifest_digest, action_digest, shadow=False
+        )
+        event_hashes.append(event.event_hash or "")
+
+    def _record_trip(
+        self,
+        trip: LoopTrip,
+        run_id: str,
+        trace_id: str,
+        manifest_digest: str,
+        action_digest: str,
+        *,
+        shadow: bool,
+        extra: dict[str, object] | None = None,
+    ) -> EvidenceEvent:
+        """The detection as a ``POLICY`` event, so the audit export's decision record lists it."""
+        return self._record(
+            run_id,
+            trace_id,
+            EventKind.POLICY,
+            manifest_digest,
+            getattr(self.policy, "policy_digest", "0" * 64),
+            action_digest,
+            "would-deny" if shadow else "deny",
+            RUNAWAY_LOOP_WOULD_TRIP if shadow else RUNAWAY_LOOP_DETECTED,
+            {**trip.evidence(), **(extra or {})},
+            redactor=self.redactor,
+            schema_version=SHADOW_EVENT_SCHEMA if shadow else None,
+        )
+
+    def is_shadow(self, manifest: AuthorizationManifest) -> bool:
+        """True when this action must be decided and not dispatched."""
+        return self.shadow or (manifest.phase5 is not None and manifest.phase5.run_mode == "shadow")
+
+    def _admit_capabilities(self, manifest: AuthorizationManifest) -> AdmissionDecision:
+        """Refuse a 1.5 manifest whose capability increase is not covered (ApprovalRefused)."""
+        if self.admission is None:
+            raise ApprovalRefused(
+                "APPROVAL_ADMISSION_UNCONFIGURED",
+                "a manifest 1.5 needs the approved baseline to be admitted",
+            )
+        return self.admission.admit(manifest, now=self.clock())
+
+    def admit(
+        self, manifest: AuthorizationManifest, *, run_id: str, trace_id: str
+    ) -> AdmissionDecision | None:
+        """Run-level capability admission, recorded as one ``ADMISSION`` event.
+
+        ``None`` for a manifest before 1.5, with nothing recorded, so a v1 ledger is unchanged.
+        For 1.5 the decision -- admitted with its delta, or refused with its reason -- is
+        evidence either way, and a refusal raises :class:`ApprovalRefused` after it is recorded.
+        """
+        if manifest.phase5 is None:
+            return None
+        try:
+            decision = self._admit_capabilities(manifest)
+        except ApprovalRefused as exc:
+            self._record(
+                run_id,
+                trace_id,
+                EventKind.ADMISSION,
+                manifest.manifest_digest(),
+                getattr(self.policy, "policy_digest", "0" * 64),
+                None,
+                "deny",
+                exc.reason_code,
+                {"detail": str(exc)[:MAX_FAILURE_DETAIL]},
+                redactor=self.redactor,
+            )
+            raise
+        self._record(
+            run_id,
+            trace_id,
+            EventKind.ADMISSION,
+            manifest.manifest_digest(),
+            getattr(self.policy, "policy_digest", "0" * 64),
+            None,
+            "permit",
+            decision.reason_code,
+            decision.evidence(),
+            redactor=self.redactor,
+        )
+        return decision
 
     def _denied_with_event(
         self,
@@ -454,15 +767,16 @@ class SafetyRuntime:
         kind: EventKind,
         manifest_digest: str,
         policy_digest: str,
-        action_digest: str,
+        action_digest: str | None,
         decision: str,
         reason_code: str,
         data: dict[str, object] | None = None,
         *,
         redactor: Redactor,
+        schema_version: str | None = None,
     ) -> EvidenceEvent:
         event = EvidenceEvent(
-            schema_version="1.1.0" if self.scenario_id else None,
+            schema_version=schema_version or ("1.1.0" if self.scenario_id else None),
             scenario_id=self.scenario_id,
             scenario_version=self.scenario_version,
             stage=self.stage,

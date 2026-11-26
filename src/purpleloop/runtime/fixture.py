@@ -50,13 +50,27 @@ class FixtureController:
         self.last_evidence_ids: tuple[str, ...] = ()
 
     async def call(self, operation: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        action = self.action_for(operation, arguments)
+        result = await self.runtime.run(
+            self.manifest, action, run_id=self.run_id, trace_id=f"control-{self.counter}"
+        )
+        self.last_evidence_ids = result.event_hashes
+        if result.status != "completed" or result.result is None:
+            raise RuntimeError(result.reason_code)
+        return dict(result.result.data["value"])
+
+    def action_for(self, operation: str, arguments: dict[str, Any] | None = None) -> ActionRequest:
+        """The next control-plane action, exactly as :meth:`call` submits it.
+
+        Shared with the shadow runner (WP5.1), which submits the same actions and dispatches none.
+        """
         self.counter += 1
         definition = self.tools.lookup("control", f"fixture.{operation}")
         assets = [a for a in self.manifest.assets if a.asset_id == self.control_asset_id]
         if len(assets) != 1:
             raise ValueError("exact control asset required")
         asset = assets[0]
-        action = ActionRequest(
+        return ActionRequest(
             schema_version="1.1.0",
             action_id=f"control-{self.counter}",
             adapter="control",
@@ -72,10 +86,3 @@ class FixtureController:
             arguments=arguments or {},
             budget=BudgetRequest(writes=int(definition.side_effect == SideEffectClass.WRITE)),
         )
-        result = await self.runtime.run(
-            self.manifest, action, run_id=self.run_id, trace_id=f"control-{self.counter}"
-        )
-        self.last_evidence_ids = result.event_hashes
-        if result.status != "completed" or result.result is None:
-            raise RuntimeError(result.reason_code)
-        return dict(result.result.data["value"])

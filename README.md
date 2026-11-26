@@ -11,8 +11,11 @@ controls. Phase 1 builds a deterministic closed-loop evaluation on top of that k
 > asset covered by a current, signed authorization manifest. Writes are permitted only for exact
 > registered synthetic fixture operations that a 1.1 manifest explicitly grants. Destructive
 > actions, unknown operations, and targets outside signed scope are always denied. There is no
-> production or live-model adapter, and the browser adapter drives only the bundled
-> synthetic fixture; all model responses come from offline fixtures.
+> production adapter, and the browser adapter drives only the bundled synthetic fixture. By
+> default, and in every PR lane, all model responses come from offline fixtures. A live model is
+> reached only through the opt-in stochastic lane, at an exact model origin that the signed
+> manifest grants and that can never coincide with a target asset
+> ([ADR 0008](docs/adr/0008-model-plane-separate-from-target-plane.md)).
 
 ## Setup and verification
 
@@ -71,6 +74,33 @@ cannot reach one. The stochastic lane is opt-in (`make agent-stochastic` with
 `PURPLELOOP_MODEL_ENDPOINT`, and `PURPLELOOP_MODEL_API_KEY` for a hosted API); a missing credential
 is a recorded skip and never a silent fall back to the offline provider.
 
+**Real-model knobs (Phase 5).** Decoding, price, and budget are set per run — command line first,
+then environment, then the old default (temperature 0, top_p 1, seed 42, 512 output tokens):
+`PURPLELOOP_MODEL_{TEMPERATURE,TOP_P,SEED,MAX_OUTPUT_TOKENS}` (`SEED=none` is unseeded),
+`PURPLELOOP_MODEL_SEED_POLICY=per-repetition` (repetition *i* signs seed+*i*, so sampled repetitions
+differ), `PURPLELOOP_MODEL_COST_BUDGET_MICROUSD` (the signed per-run cap), and
+`PURPLELOOP_MODEL_PRICE_{INPUT,OUTPUT}_MICROUSD_PER_1K`. A hosted `openai-compatible` profile
+**refuses to run without a price**; a free hosted model needs `--declared-free <model-id>`. Local
+profiles (Ollama, vLLM) default to zero. `agent-corpus` runs all 25 scenarios against the pin;
+`calibrate-pin` and `calibration-check` fix and check per-pin token expectations
+(`baselines/model-calibration/`); `containment-check` holds the compromised-model property over any
+run's bundles; `judge-report --judge-endpoint` scores a real judge (`PURPLELOOP_JUDGE_*`) on the
+frozen corpus — advisory only. A thinking model's leading `<think>` block is stripped before parsing
+and recorded by digest. `make agent-corpus-stochastic` and `make judge-report-networked` wrap these.
+
+**Evaluation matrix (Phase 5, WP5.2).** Models × defenses on the agent corpus, from a signed spec
+under `scenarios/matrix/`. `matrix-run` verifies the spec (and, for a spec with a real pin, the
+manifest 1.5 authorizing its digest), writes a pre-flight cost and wall-time estimate, and refuses
+before the first call when either is over the signed cap; `matrix-report` re-verifies a finished
+matrix and recomputes it from its trials. The headline is which defenses still hold when the model
+stops cooperating, per scenario — never a per-model score. Advisory; no gate reads it.
+
+```console
+make matrix-standins                    # 3 stand-ins x 25 scenarios x 9 columns x 5 reps, offline
+uv run purpleloop matrix-run scenarios/matrix/real-pins-subset.json \
+  --endpoint http://127.0.0.1:11434/v1 # real pins (local Ollama); see docs/phase5/wp5.2-acceptance.md
+```
+
 Phase 4 adds the CI quality system and release machinery: a fast cross-lane smoke demo, five
 enforcing gates, signed run attestations, a self-contained audit export, a held-out mutation
 set, and a regression registry mapping every accepted finding to its pinning test:
@@ -92,6 +122,14 @@ uv run purpleloop verify-bundle out/agent-run --attestation
 uv run purpleloop audit-export out/agent-run out/audit.json
 ```
 
+A terminal recording of the one-command demo (`purpleloop smoke-demo`, 14 of 14 passing) followed
+by fail-closed cases (an expired manifest refused with `EXPIRED_MANIFEST`, 17 of 17
+scope-widening mutations denied by `holdout-check`, and the evaluator-injection report) is in
+[docs/demo/phase-demo.cast](docs/demo/phase-demo.cast). Play it with `asciinema play
+docs/demo/phase-demo.cast` or load it in
+[asciinema-player](https://docs.asciinema.org/manual/player/). It was made by
+`scripts/record_demo.py` from commands actually run, and it is not edited.
+
 Fixed sample artifact sets for reviewers — a passing attested run, an admission-denied run,
 and a labelled evidence-integrity incident — live in [docs/samples](docs/samples), with the
 timed walkthrough protocol in [docs/reviewer-walkthrough.md](docs/reviewer-walkthrough.md).
@@ -99,6 +137,35 @@ timed walkthrough protocol in [docs/reviewer-walkthrough.md](docs/reviewer-walkt
 Building the fixture image pulls `python:3.12-slim` and `ghcr.io/astral-sh/uv` from public
 registries, so the first `phase1-demo` needs network access. Evaluation itself is fully offline
 and needs no cloud credentials.
+
+## Results so far
+
+Every figure below comes from the acceptance record it cites. The record states how it was
+measured and what it does not show. Unless a row says otherwise, the figures describe the
+bundled synthetic fixtures and the offline scripted model only. **A passing run is not evidence
+that a target or a model is secure.**
+
+| Measure | Result | Source |
+| --- | --- | --- |
+| Corpus | 48 labelled scenarios: 5 `phase1`, 18 `supportlab`, 25 `agent` | [Phase 3](docs/phase3-acceptance.md) |
+| Seeded recall / false positives | 1.0 / 0 in every lane, from explicit ground-truth labels (supportlab: 18 of 18, first written down in the loose-ends audit) | [Phase 1](docs/phase1-acceptance.md), [Phase 3](docs/phase3-acceptance.md), [loose ends](docs/phase5/loose-ends.md) |
+| Deterministic replay | 229 of 229 trials matched across the three lanes | [Phase 4](docs/phase4-acceptance.md) |
+| Kill switch | p99 0.654 ms over 1,000 trials (cooperative in-process cancellation only) | [Phase 0](docs/phase0-acceptance.md) |
+| Smoke demo | 14 of 14 in 12.131 s against a 600 s target (the recorded run) | [WP5.0.11](docs/phase5/wp5.0.11-acceptance.md) |
+| Scope-widening holdout | 17 of 17 near-miss mutations denied, base action permitted | [Phase 4](docs/phase4-acceptance.md) |
+| Captured model | 0 out-of-scope actions across 25 scenarios with a hostile stand-in model | [Phase 3](docs/phase3-acceptance.md) |
+| Evaluator injection | resistance 1.000 (n=24) for the scripted judge; 0.583 with delimiting removed | [Phase 3](docs/phase3-acceptance.md) |
+| First real model | `qwen2.5:7b-instruct` (local, temperature 0) on one scenario: the prompt-only defense failed 5 of 5; after enforcing provenance at the email sink it held 5 of 5 | [Phase 4, WP4.0.1](docs/phase4-acceptance.md) |
+| Sampled real-model corpus | `qwen2.5:7b-instruct`, temperature 0.7, 25 scenarios × 5: defended-replay attack success 28/125 before the fixes it prompted (provenance at the export, refund, and CRM sinks; memory provenance), 1/125 after (an oracle false positive); calibration ±10% met (−0.20%); containment 0 violations | [WP5.0.2–5.0.6](docs/phase5/wp5.0-real-model-acceptance.md) |
+| Real judge (same lineage) | `deepseek-r1` on the frozen 24 cases, 1 of 3 trials: α 0.304 [−0.067, 0.608], κ 0.667 (n=6), 0 critical false passes | [WP5.0.5](docs/phase5/wp5.0-real-model-acceptance.md) |
+| Suite | 472 passed, 3 gated skips, 89.40% branch coverage at `ab66ab0` | [WP5.0.1](docs/phase5/wp5.0.1-acceptance.md) |
+| CI gate proofs | 5 of 5 gate classes observed blocking in GitHub Actions, each on its own red branch, plus a passing control | [WP5.0.7](docs/phase5/wp5.0.7-acceptance.md) |
+| Phase 5 expansion | Shadow mode (0 adapter calls), risk approval (6 of 6 increase kinds refused), models × defenses matrix, telemetry (0 leaks, byte-identical outcomes), review UI (inert, read-only), codelab lane (10 of 10 escapes contained), benchmark promotion (6 of 8) | [Phase 5 index](docs/phase5-acceptance.md) |
+
+**Not yet measured:** a real API cost, a model from a second family (judge delta and matrix),
+precision on a human-adjudicated sample, an independent reviewer session, and a release signed
+with a held key.
+[docs/phase5/loose-ends.md](docs/phase5/loose-ends.md) lists every such item and who owns it.
 
 ## CLI
 
@@ -201,19 +268,57 @@ with the trust model stated at exactly its real strength. **No number produced o
 offline stand-in is presented as evidence about a real model**; the acceptance record says
 which runs have actually happened.
 
+## Phase 5 governance: shadow mode and risk approval
+
+Before the harness may do more than v1 did, it must first do it in **shadow**: the kernel
+admits, compiles, evaluates policy, and reserves budget for every action, then records it as
+suppressed and dispatches nothing. A pure `capability_delta` compares a manifest 1.5 against the
+signed v1 capability baseline; a non-empty delta is admitted in `execute` mode only under one
+signed `RiskApproval` naming exactly that delta and a shadow report of the same surface
+([ADR 0014](docs/adr/0014-shadow-mode-and-risk-approval.md),
+[WP5.1](docs/phase5/wp5.1-acceptance.md)). The sequence is `purpleloop shadow-run` →
+`purpleloop approve` → `purpleloop approval-check`. The committed baseline was signed with an
+ephemeral key, and in this single-author project separate keys are not separate people.
+
+## Phase 5 observability (WP5.3)
+
+Telemetry is a projection of the evidence ledger, never a second source of truth: spans and
+metrics are computed from redacted, persisted ledger events in the evidence writer, encoded as
+OTLP/JSON, and written by default to a local file (`uv run purpleloop observe-suite`). An
+optional collector profile (`compose.observability.yaml`) receives them only when a signed
+Manifest 1.5 names it. Telemetry is outside the trusted computing base, so a failing sink never
+changes an outcome; the failure is recorded in a separate status ledger (ADR 0016). Names are
+versioned in [the telemetry namespace](docs/telemetry-namespace.md). `uv run purpleloop analyze`
+turns verified bundles into Parquet and queries them with DuckDB, and refuses unverified ones.
+
+## Phase 5 codelab: a fixture that executes code (WP5.5)
+
+`codelab` is a second disposable target: a data-analysis assistant whose "run analysis snippet"
+tool executes code in a **sandbox container the fixture owns** (no network, read-only root plus
+one 16 MiB tmpfs, every capability dropped, `no-new-privileges`, default seccomp, pids/memory/CPU
+limits, a wall-time kill) — never in the fixture's process and never in the harness. Its lane
+admits only manifest 1.5, so every run needs a signed approval of its `code-exec` delta.
+`purpleloop codelab-run` runs the approval path and the 10-scenario corpus offline against a
+stub sandbox; `purpleloop codelab-escape` runs the containment-escape suite against the real
+container (hardened runc here; gVisor was not available). See
+[ADR 0015](docs/adr/0015-codelab-contained-code-execution.md) and
+[WP5.5](docs/phase5/wp5.5-acceptance.md).
+
 ## Documentation
 
 - [Product requirements and delivery plan](planning/PRD.md) and the
-  [Phase 2](planning/phase2-plan.md), [Phase 3](planning/phase3-plan.md), and
-  [Phase 4](planning/phase4-plan.md) plans
+  [Phase 2](planning/phase2-plan.md), [Phase 3](planning/phase3-plan.md),
+  [Phase 4](planning/phase4-plan.md), [Phase 5](planning/phase5-plan.md), and
+  [Phase 6](planning/phase6-agents-plan.md) plans
 - [Architecture](docs/architecture.md) and [threat model](docs/threat-model.md)
 - [Rules of engagement](docs/rules-of-engagement.md)
 - Designs: [Phase 1](docs/phase1-plan.md), [Phase 2](docs/phase2-plan.md),
   [Phase 3](docs/phase3-plan.md), [Phase 4](docs/phase4-plan.md), and the
   [evaluation methodology](docs/evaluation-methodology.md)
 - Acceptance records: [Phase 0](docs/phase0-acceptance.md), [Phase 1](docs/phase1-acceptance.md),
-  [Phase 2](docs/phase2-acceptance.md), [Phase 3](docs/phase3-acceptance.md), and
-  [Phase 4](docs/phase4-acceptance.md)
+  [Phase 2](docs/phase2-acceptance.md), [Phase 3](docs/phase3-acceptance.md),
+  [Phase 4](docs/phase4-acceptance.md), and the Phase 5 work-package notes in
+  [docs/phase5](docs/phase5), including the [loose-ends audit](docs/phase5/loose-ends.md)
 - Operations: [retention policy](docs/retention-policy.md),
   [incident runbook](docs/incident-runbook.md),
   [reviewer walkthrough](docs/reviewer-walkthrough.md), and the

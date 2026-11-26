@@ -58,6 +58,8 @@ SMOKE_PATH = ROOT / "scenarios" / "smoke.json"
 HOLDOUT_PATH = ROOT / "scenarios" / "holdout" / "mutations.json"
 SCHEMA_BASELINE_PATH = ROOT / "baselines" / "schema-digests.json"
 CORPUS_BASELINE_PATH = ROOT / "baselines" / "corpus-baseline.json"
+#: WP5.5: the codelab lane's own per-risk-class baseline, bumped with ``--lane codelab``.
+CODELAB_BASELINE_PATH = ROOT / "baselines" / "corpus-baseline-codelab.json"
 AGENT_GROUND_TRUTH = ROOT / "scenarios" / "agent" / "ground-truth.json"
 
 INJECTABLE = (
@@ -282,28 +284,43 @@ def register(app: typer.Typer) -> None:
 
     @app.command("corpus-baseline")
     def corpus_baseline_command(
-        output: Path = CORPUS_BASELINE_PATH,
+        output: Path | None = None,
         seed: int = 42,
         commit: str | None = None,
+        lane: str = typer.Option(
+            "agent", help="agent (scenarios/agent) or codelab (scenarios/codelab, WP5.5)"
+        ),
     ) -> None:
-        """Run the agent corpus offline and record per-risk-class metrics.
+        """Run a lane's corpus offline and record per-risk-class metrics.
 
         Writing to the committed baseline path is the explicit baseline-bump step; writing to
-        another path produces the current-metrics document the gates compare against it.
+        another path produces the current-metrics document the gates compare against it. Each
+        lane has its own committed baseline (WP5.5), so another lane's corpus never rewrites the
+        agent lane's.
         """
         import tempfile
 
+        if lane not in {"agent", "codelab"}:
+            typer.echo(f"FAILED: unknown lane {lane}", err=True)
+            raise typer.Exit(2)
         try:
             resolved_commit = commit or _git_commit()
             with tempfile.TemporaryDirectory() as scratch:
-                scenarios, summaries = asyncio.run(run_offline_corpus(Path(scratch), seed=seed))
-            metrics = risk_class_metrics(
-                scenarios, load_ground_truth(AGENT_GROUND_TRUTH), summaries
-            )
-            baseline = build_baseline(metrics, corpus="scenarios/agent", commit=resolved_commit)
+                if lane == "codelab":
+                    from purpleloop.runtime import codelab
+
+                    scenarios, summaries = asyncio.run(codelab.run_offline_corpus(Path(scratch)))
+                    truth, corpus = codelab.GROUND_TRUTH, "scenarios/codelab"
+                else:
+                    scenarios, summaries = asyncio.run(run_offline_corpus(Path(scratch), seed=seed))
+                    truth, corpus = AGENT_GROUND_TRUTH, "scenarios/agent"
+            metrics = risk_class_metrics(scenarios, load_ground_truth(truth), summaries)
+            baseline = build_baseline(metrics, corpus=corpus, commit=resolved_commit)
         except (OSError, ValueError, RuntimeError) as exc:
             typer.echo(f"FAILED: {exc}", err=True)
             raise typer.Exit(1) from None
+        if output is None:
+            output = CORPUS_BASELINE_PATH if lane == "agent" else CODELAB_BASELINE_PATH
         write_json(output, baseline.model_dump(mode="json", exclude_none=True))
         failed = [s.scenario_id for s in summaries if s.status != "passed"]
         typer.echo(

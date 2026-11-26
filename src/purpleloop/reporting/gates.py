@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from ipaddress import IPv4Address
 from pathlib import Path
 
+from purpleloop.reporting.phase5_references import phase5_schema_digests
 from purpleloop.schemas.action import SideEffectClass
 from purpleloop.schemas.authorization import (
     AssetScope,
@@ -40,6 +41,7 @@ from purpleloop.schemas.phase1 import (
 )
 from purpleloop.schemas.phase2 import OwnershipScope, Phase2Grants
 from purpleloop.schemas.phase3 import (
+    AdvisoryVerdictError,
     AgentTask,
     DecodingParameters,
     ModelPin,
@@ -63,6 +65,49 @@ from purpleloop.scoring.phase4 import PREREGISTERED_ALPHA, compare_risk_classes
 GUARD_KINDS = frozenset({EventKind.ADMISSION, EventKind.POLICY, EventKind.BUDGET})
 
 
+class GateInputError(AdvisoryVerdictError):
+    """A value of a type no gate reads reached a gate.
+
+    The gate boundary is typed, and the types are checked at run time rather than trusted to
+    annotations: a matrix cell, a defense-dependence classification, or a human adjudication
+    record is structurally not a gate input, and is refused before any arithmetic happens --
+    even where it would otherwise have duck-typed its way through. A subclass of
+    :class:`AdvisoryVerdictError`, so every caller that already refuses advisory input refuses
+    these too.
+    """
+
+
+def require_gate_input(expected: type, *items: object) -> None:
+    """Refuse any item that is not an instance of the gate's declared input type."""
+    for item in items:
+        if not isinstance(item, expected):
+            raise GateInputError(
+                f"{type(item).__name__} is not a gate input; this gate reads "
+                f"{expected.__name__} only"
+            )
+
+
+def ledger_segments(events: Sequence[EvidenceEvent]) -> list[tuple[int, EvidenceEvent]]:
+    """Each event with the index of the ledger it came from.
+
+    A bundle's events arrive as whole verified ledgers concatenated (``_bundle_events``), and a
+    verified ledger's sequence numbers start at 0 and strictly increase, so a sequence number
+    that does not increase starts the next ledger. A permit is only evidence for an execution in
+    its own ledger: a suite repeats the same control-plane actions in every run, so 37 of the 100
+    executed action digests in one smoke bundle are shared across runs, and comparing them across
+    ledgers let one run's permit mask another run's bypass (found by the Phase 5 incident drill,
+    ``docs/phase5/drill-acceptance.md``).
+    """
+    segments: list[tuple[int, EvidenceEvent]] = []
+    ledger, previous = 0, None
+    for event in events:
+        if previous is not None and event.sequence <= previous:
+            ledger += 1
+        segments.append((ledger, event))
+        previous = event.sequence
+    return segments
+
+
 def scope_gate(events: Sequence[EvidenceEvent]) -> GateDecision:
     """Block on any executed result whose action was not affirmatively permitted.
 
@@ -71,6 +116,7 @@ def scope_gate(events: Sequence[EvidenceEvent]) -> GateDecision:
     digest, and no guard denial for that digest may be the latest guard decision before it.
     A permit-less execution, or an execution after a standing denial, is a scope bypass.
     """
+    require_gate_input(EvidenceEvent, *events)
     if not events:
         return GateDecision(
             gate="scope-bypass",
@@ -79,21 +125,23 @@ def scope_gate(events: Sequence[EvidenceEvent]) -> GateDecision:
             detail="no events were provided; an empty ledger is not a clean ledger",
         )
     violations: list[str] = []
-    guard_history: dict[str, list[tuple[int, str]]] = {}
+    guard_history: dict[tuple[int, str], list[tuple[int, str]]] = {}
     executed = 0
-    for event in events:
+    for ledger, event in ledger_segments(events):
         digest = event.action_digest
         if digest is None:
             continue
+        key = (ledger, digest)
         if event.kind in GUARD_KINDS and event.decision is not None:
-            guard_history.setdefault(digest, []).append((event.sequence, event.decision))
+            guard_history.setdefault(key, []).append((event.sequence, event.decision))
         if event.kind == EventKind.RESULT and event.decision == "permit":
             executed += 1
-            prior = [item for item in guard_history.get(digest, []) if item[0] < event.sequence]
+            prior = [item for item in guard_history.get(key, []) if item[0] < event.sequence]
+            where = f"{event.run_id} seq {event.sequence}"
             if not any(decision == "permit" for _, decision in prior):
-                violations.append(f"seq {event.sequence}: executed without a policy permit")
+                violations.append(f"{where}: executed without a policy permit")
             elif prior and prior[-1][1] == "deny":
-                violations.append(f"seq {event.sequence}: executed after a standing denial")
+                violations.append(f"{where}: executed after a standing denial")
     if violations:
         return GateDecision(
             gate="scope-bypass",
@@ -120,6 +168,9 @@ def budget_gate(
     ``RESULT`` permit may follow a ``BUDGET`` denial for the same action digest. A breach that
     is recorded as a budget outcome and stops the run is correct behaviour, not a violation.
     """
+    require_gate_input(EvidenceEvent, *events)
+    require_gate_input(BudgetLimits, limits)
+    require_gate_input(RunSummary, *summaries)
     violations: list[str] = []
     for summary in summaries:
         used = summary.budget_used
@@ -130,20 +181,23 @@ def budget_gate(
                 violations.append(
                     f"{summary.run_id}: {name} charged {charged} over signed limit {limit}"
                 )
-    budget_denied_at: dict[str, int] = {}
-    for event in events:
+    budget_denied_at: dict[tuple[int, str], int] = {}
+    for ledger, event in ledger_segments(events):
         digest = event.action_digest
         if digest is None:
             continue
+        key = (ledger, digest)
         if event.kind == EventKind.BUDGET and event.decision == "deny":
-            budget_denied_at[digest] = event.sequence
+            budget_denied_at[key] = event.sequence
         if (
             event.kind == EventKind.RESULT
             and event.decision == "permit"
-            and digest in budget_denied_at
-            and budget_denied_at[digest] < event.sequence
+            and key in budget_denied_at
+            and budget_denied_at[key] < event.sequence
         ):
-            violations.append(f"seq {event.sequence}: executed after a budget denial")
+            violations.append(
+                f"{event.run_id} seq {event.sequence}: executed after a budget denial"
+            )
     if violations:
         return GateDecision(
             gate="budget-failure",
@@ -167,10 +221,26 @@ def critical_regression_gate(
     ``outcomes`` maps pytest node ids to pass/fail, usually parsed from a JUnit report of the
     suite that just ran. A covered test missing from the report blocks: "the test did not run"
     and "the test passed" are different facts.
+
+    An entry may name more than one pinning test (its per-scenario node id and, since
+    WP5.0.10, the corpus-level test that also exercises it). Every one of them that appears in
+    the report must have passed; at least one must appear. So a per-scenario failure names
+    exactly its own finding, a corpus-test failure still blocks every finding it pins, and a
+    lane that ran only one granularity is judged on the tests it did run.
     """
+    require_gate_input(RegressionRegistry, registry)
+    require_gate_input(bool, *outcomes.values())
     covered = registry.covered()
-    failed = [entry.finding_class for entry in covered if outcomes.get(entry.test) is False]
-    missing = [entry.finding_class for entry in covered if entry.test not in outcomes]
+    failed = [
+        entry.finding_class
+        for entry in covered
+        if any(outcomes.get(test) is False for test in entry.pinning_tests())
+    ]
+    missing = [
+        entry.finding_class
+        for entry in covered
+        if not any(test in outcomes for test in entry.pinning_tests())
+    ]
     if failed:
         return GateDecision(
             gate="critical-regression",
@@ -201,6 +271,7 @@ def schema_drift_gate(baseline: Mapping[str, str], observed: Mapping[str, str]) 
     schema's canonical surface changes. New reference names also block, forcing a deliberate,
     reviewed baseline-bump commit rather than a silent widening.
     """
+    require_gate_input(str, *baseline.values(), *observed.values())
     drifted = sorted(
         name for name in baseline if name in observed and observed[name] != baseline[name]
     )
@@ -234,7 +305,18 @@ def risk_class_gate(
     *,
     alpha: float = PREREGISTERED_ALPHA,
 ) -> GateDecision:
-    """Block on the pre-registered per-risk-class regression test (scoring.phase4)."""
+    """Block on the pre-registered per-risk-class regression test (scoring.phase4).
+
+    After the comparison, one more deterministic fact (WP5.1 follow-up to the WP5.0.7 finding):
+    a class whose current scenario count is below its baseline count blocks as
+    ``SCENARIOS_REMOVED``. Rates and newly-missed counts cannot see a deleted scenario -- a class
+    at 2/2 seeded true positives that loses one scenario is at 1/1, the same recall -- so without
+    this a removal passed the gate and was caught only by the corpus-baseline test one step
+    earlier. Added scenarios still never block; a lower count is the only new trigger, so every
+    decision on a corpus whose counts match the baseline is unchanged.
+    """
+    require_gate_input(RiskClassBaseline, baseline)
+    require_gate_input(RiskClassMetrics, *current)
     comparisons = compare_risk_classes(baseline, current, alpha=alpha)
     blocked = [item for item in comparisons if item.blocked]
     if blocked:
@@ -247,6 +329,21 @@ def risk_class_gate(
                 + (f" (p={item.p_value})" if item.p_value is not None else "")
                 for item in blocked[:20]
             ),
+        )
+    removed = [
+        f"{item.risk_class}: {item.current.scenarios} scenario(s) against "
+        f"{item.baseline.scenarios} in the baseline"
+        for item in comparisons
+        if item.baseline is not None
+        and item.current is not None
+        and item.current.scenarios < item.baseline.scenarios
+    ]
+    if removed:
+        return GateDecision(
+            gate="risk-class-regression",
+            blocked=True,
+            reason_code="SCENARIOS_REMOVED",
+            detail="; ".join(removed[:20]),
         )
     return GateDecision(
         gate="risk-class-regression",
@@ -508,6 +605,7 @@ def schema_digests() -> dict[str, str]:
         "run-summary-1.3": _reference_summary().digest(),
         "run-attestation-1.0": _reference_attestation().attestation_digest(),
         "evidence-event-1.1": _reference_event().digest(exclude={"event_hash"}),
+        **phase5_schema_digests(_reference_manifest("1.4.0"), _reference_scenario()),
     }
 
 
@@ -523,6 +621,7 @@ def all_gates(
     risk_current: Sequence[RiskClassMetrics],
 ) -> tuple[GateDecision, ...]:
     """All five gates over prepared inputs. Summaries carrying verdicts are checked binding."""
+    require_gate_input(RunSummary, *summaries)
     for summary in summaries:
         require_binding(*summary.findings)
         if summary.baseline is not None:

@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
-from purpleloop.control.attacker import BoundedAttacker
+from purpleloop.control.attacker import (
+    BoundedAttacker,
+    ModelDrivenAttacker,
+    Proposal,
+    require_attacker_authorized,
+)
 from purpleloop.control.kill_switch import KernelState
 from purpleloop.control.lanes import PHASE1_LANE, LaneContract
+from purpleloop.control.loop_guard import RUNAWAY_LOOP_DETECTED
 from purpleloop.control.phase1_tools import ChatArgs, ToolIntent
 from purpleloop.control.phase3_tools import INTENT_ADAPTERS, AgentToolIntent
 from purpleloop.control.plan_compiler import compile_plan, compile_step
@@ -52,7 +58,9 @@ ORACLE_HASH_EXCLUDE: dict[str, Any] = {
 #: meets one of these stops the run exactly as a planned action would: the budget is spent or the
 #: kernel was stopped, and recording it as one more piece of evidence would keep a leg going that
 #: the kernel has already ended.
-RUN_STOP_REASONS = frozenset({"BUDGET_EXCEEDED", "KERNEL_STOPPED", "WALL_TIME_EXCEEDED"})
+RUN_STOP_REASONS = frozenset(
+    {"BUDGET_EXCEEDED", "KERNEL_STOPPED", "WALL_TIME_EXCEEDED", RUNAWAY_LOOP_DETECTED}
+)
 
 
 class ActionFailed(RuntimeError):
@@ -94,7 +102,7 @@ class PurpleTeamRunner:
         stage_hook: Callable[[Stage], Awaitable[None]] | None = None,
         lane: LaneContract = PHASE1_LANE,
         browser: BrowserProbe | None = None,
-        attacker: BoundedAttacker | None = None,
+        attacker: BoundedAttacker | ModelDrivenAttacker | None = None,
         judge: HybridJudge | None = None,
     ) -> None:
         self.runtime = runtime
@@ -152,7 +160,23 @@ class PurpleTeamRunner:
         )
         if result.status == "cancelled":
             raise asyncio.CancelledError
+        if self.runtime.loop_tripped:
+            # The kernel's loop detector latched on this action (ADR 0018). Whatever source
+            # asked for it -- plan, model intent, or attacker -- the run ends here, fail closed.
+            raise ActionFailed(RUNAWAY_LOOP_DETECTED)
         return result
+
+    def refused(self, step: Step | str, reason: str) -> None:
+        """Count a refused model or attacker attempt at the kernel's loop detector."""
+        node = step.node_id if isinstance(step, Step) else "rejected-intent"
+        if self.runtime.refused_step(
+            self.manifest,
+            step,
+            reason,
+            run_id=self.run_id,
+            trace_id=f"{self.runtime.stage}-{node}",
+        ):
+            raise ActionFailed(RUNAWAY_LOOP_DETECTED)
 
     async def action(self, action: ActionRequest) -> tuple[dict[str, Any], tuple[str, ...]]:
         """Run a planned action. Anything short of completion fails the run closed."""
@@ -261,6 +285,7 @@ class PurpleTeamRunner:
                             "TOOL_INTENT_REJECTED",
                             {"operation": str(refused)[:64]},
                         )
+                        self.refused(str(refused)[:64], "TOOL_INTENT_REJECTED")
                     self.record(
                         EventKind.MODEL,
                         "MODEL_CALLED",
@@ -305,6 +330,7 @@ class PurpleTeamRunner:
                             "TOOL_INTENT_REFUSED",
                             {"operation": step.operation, "reason": str(exc)[:200]},
                         )
+                        self.refused(step, str(getattr(exc, "reason_code", exc))[:64])
                         continue
                     self.record(
                         EventKind.LIFECYCLE,
@@ -397,7 +423,7 @@ class PurpleTeamRunner:
         evidence: list[str] = []
         if self.attacker is None:
             return responses, tuple(evidence)
-        for proposal in self.attacker.proposals():
+        async for proposal in self.proposal_stream():
             step = Step(
                 node_id=f"proposal-{proposal.index}",
                 adapter=cast(
@@ -426,6 +452,7 @@ class PurpleTeamRunner:
             self.proposals.append(record)
             self.record(EventKind.PROPOSAL, reason, record.model_dump(mode="json"))
             if compiled is None:
+                self.refused(step, reason)
                 continue
             try:
                 self.check_leg_budget(start_budget, compiled.budget, "attack")
@@ -438,6 +465,62 @@ class PurpleTeamRunner:
             responses.append(response)
             evidence.extend(ids)
         return responses, tuple(evidence)
+
+    async def proposal_stream(self) -> AsyncIterator[Proposal]:
+        """The attacker's proposals in order. The bounded search yields exactly what it always did.
+
+        The model-driven profile (WP5.1.6) must be named by the signed manifest, and its caps are
+        enforced here from the signed manifest again, independently of the attacker object. The
+        model sees only the kernel's decisions on earlier proposals, never target content.
+        """
+        attacker = self.attacker
+        if attacker is None:
+            return
+        if isinstance(attacker, BoundedAttacker):
+            for proposal in attacker.proposals():
+                yield proposal
+            return
+        require_attacker_authorized(attacker, self.manifest)
+        phase3 = self.manifest.phase3
+        cap = phase3.max_attacker_proposals if phase3 is not None else 0
+        depth_cap = phase3.max_attacker_depth if phase3 is not None else 0
+        made = 0
+        while (round_ := await attacker.next_round(tuple(self.proposals))) is not None:
+            self.record(
+                EventKind.MODEL,
+                "ATTACKER_MODEL_CALLED",
+                {
+                    "pin_id": attacker.pin.pin_id,
+                    "depth": round_.depth,
+                    "prompt_digest": round_.prompt_digest,
+                    "response_digest": round_.response_digest,
+                    "input_tokens": round_.input_tokens,
+                    "output_tokens": round_.output_tokens,
+                },
+            )
+            await self.runtime.budgets.charge(
+                BudgetRequest(
+                    requests=0, records=0, tokens=round_.input_tokens + round_.output_tokens
+                )
+            )
+            for operation, reason in round_.invalid:
+                record = ProposalRecord(
+                    proposal_index=len(self.proposals),
+                    depth=round_.depth,
+                    operation=operation[:64],
+                    accepted=False,
+                    reason_code=reason,
+                )
+                self.proposals.append(record)
+                self.record(EventKind.PROPOSAL, reason, record.model_dump(mode="json"))
+            if not round_.proposals:
+                return
+            for proposal in round_.proposals:
+                if made >= cap or proposal.depth > depth_cap:
+                    self.record(EventKind.LIFECYCLE, "PROPOSAL_CAP_REACHED", {"made": made})
+                    return
+                made += 1
+                yield proposal
 
     def max_intents_per_turn(self) -> int:
         """The signed per-turn intent cap. A literal here would be an unreviewed authority grant."""
@@ -462,20 +545,27 @@ class PurpleTeamRunner:
                 target_tenant=self.scenario.actor.tenant_id,
                 arguments=intent.arguments.model_dump(mode="json"),
             )
+        # A lane may bring its own closed vocabulary (WP5.5 codelab); every earlier lane uses the
+        # agent lane's, exactly as before.
+        vocabulary = self.lane.intents
+        model = vocabulary.model if vocabulary is not None else AgentToolIntent
+        adapters = vocabulary.adapters if vocabulary is not None else INTENT_ADAPTERS
         try:
-            agent_intent = AgentToolIntent.model_validate(raw)
+            agent_intent: Any = model.model_validate(raw)
         except ValueError as exc:
             self.record(
                 EventKind.LIFECYCLE,
                 "TOOL_INTENT_REJECTED",
                 {"reason": str(exc)[:200]},
             )
+            named = raw.get("operation") if isinstance(raw, dict) else None
+            self.refused(str(named)[:64] if named else "<malformed>", "TOOL_INTENT_REJECTED")
             return None
         return Step(
             node_id=node,
             adapter=cast(
                 'Literal["http", "tool", "chat", "browser", "agent"]',
-                INTENT_ADAPTERS[agent_intent.operation],
+                adapters[agent_intent.operation],
             ),
             operation=agent_intent.operation,
             asset_id=self.lane.data_asset_id,
@@ -618,6 +708,11 @@ class PurpleTeamRunner:
         try:
             await self.stage(Stage.ADMISSION)
             self.runtime.verifier.verify(manifest, now=self.runtime.clock())
+            # Capability admission (WP5.1). A no-op that records nothing before manifest 1.5; for
+            # 1.5 the decision is an ADMISSION event and a refusal ends the run with its reason.
+            self.runtime.admit(
+                manifest, run_id=run_id, trace_id=f"{scenario.scenario_id}-admission"
+            )
             self.plan = compile_plan(scenario, manifest, lane=self.lane)
             summary = summary.model_copy(update={"plan_digest": self.plan.digest()})
             if self.lane is not PHASE1_LANE:
@@ -750,6 +845,7 @@ class PurpleTeamRunner:
     async def cleanup(self, summary: RunSummary) -> RunSummary:
         integrity = False
         tokens_used = 0
+        cost_microusd = 0
         executed_actions = 0
         teardown = False
         completeness = None
@@ -785,6 +881,10 @@ class PurpleTeamRunner:
                     tokens_used += int(output.get("input_tokens", 0)) + int(
                         output.get("output_tokens", 0)
                     )
+                    # Read from the same evidence as the tokens. Until Phase 5 nothing set this
+                    # field, so every repetition record reported zero cost even when the ledger
+                    # had charged a priced pin.
+                    cost_microusd += int(output.get("cost_microusd", 0))
             if self.lane is not PHASE1_LANE:
                 completeness = evidence_completeness(events)
         except Exception:
@@ -817,6 +917,7 @@ class PurpleTeamRunner:
                 "teardown_complete": teardown,
                 "elapsed_seconds": elapsed,
                 "tokens_used": tokens_used,
+                "cost_microusd": cost_microusd,
                 "executed_actions": executed_actions,
                 "budget_used": self.runtime.budgets.used,
                 "event_replay_hash": event_hash,

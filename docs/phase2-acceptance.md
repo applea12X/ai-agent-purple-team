@@ -117,6 +117,19 @@ Command: `make supportlab-demo`
   browser flow tears the driver down through the adapter's `finally` path and closes the fixture.
   The measurement is recorded in `artifacts/phase2-emergency-stop.json`.
 
+> **Correction (November 24, 2026), found in the Phase 5 loose-ends audit.** No latency was
+> measured. `test_browser_emergency_stop_is_measured` checks that a kill during the attack stage
+> tears the browser driver down and closes the fixture, and that much holds. But the JSON it
+> writes is `{"measured": true}`: the teardown timestamp is taken and never recorded. The test
+> also uses the in-process HTML-form driver, not an out-of-process Chromium child. So this record
+> holds no browser-lane emergency-stop figure. The open item is in `docs/phase5/loose-ends.md`.
+> The rest of this record is left as written.
+>
+> **Measured (November 25, 2026).** 1,000 trials per driver, each killed with a browser page
+> load in flight: p99 8.67 ms with the HTML-form driver and 119.26 ms with Playwright/Chromium
+> 145, every browser process gone after every stop, against the 2,000 ms ceiling. Method and
+> records: [wp5.0-loose-ends-2-acceptance.md](phase5/wp5.0-loose-ends-2-acceptance.md).
+
 ## Defects found and fixed during acceptance
 
 - **Redactor masked a defense-config value.** The flaw flag named `function_authorization` matched

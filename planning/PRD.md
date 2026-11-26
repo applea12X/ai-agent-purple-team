@@ -126,6 +126,12 @@ No imported framework owns the canonical scenario or result schema.
 - `tests/`: unit, property, contract, integration, replay, fault-injection, and end-to-end suites.
 - `.github/workflows/`: deterministic PR lane and optional scheduled real-model lane.
 
+As built (reconciled in `docs/phase5/loose-ends.md`): the `supportlab` application, seed data,
+agent, tools, and defenses live in `src/purpleloop/fixture/supportlab/`, and `targets/supportlab/`
+holds only the container build context and migrations. Execution is sequential in topological
+order, so there is no separate scheduler module. `control/` has no approvals module yet (WP5.1),
+and `reporting/` writes no Parquet yet (WP5.3).
+
 ## 6. Canonical data contracts
 
 ### Authorization manifest
@@ -347,7 +353,12 @@ Debt carried out of Phase 1, to be cleared in WP2.0:
 - Section 5 of this document lists `docs/prd.md` and `policies/`, neither of which exists in the
   tree.
 
-### Phase 2 — Realistic SaaS and browser lane
+### Phase 2 — Realistic SaaS and browser lane — complete (`03f05e2`, 2026-09-07)
+
+The measured results are in `docs/phase2-acceptance.md`; the implemented design is in
+`docs/phase2-plan.md`. The supportlab seeded-recall and false-positive checkpoint below was
+asserted by the corpus test but not written into that record; it is recorded in
+`docs/phase5/loose-ends.md` (18 of 18, 0 false positives).
 
 #### Objective and verified starting point
 
@@ -588,7 +599,7 @@ it. No stochastic result may gate a release-blocking invariant.
 - The deterministic lanes replay exactly as before; the stochastic lane reports its own measured
   variance instead of claiming determinism.
 
-### Phase 4 — CI quality system and portfolio release — implemented (2026-09-15); real-model checkpoints open
+### Phase 4 — CI quality system and portfolio release — implemented (2026-09-15); author-closable debt cleared by WP5.0 (2026-11-26); human, hosted-credential, and release items open
 
 The implemented design is documented in `docs/phase4-plan.md`; the measured results are in
 `docs/phase4-acceptance.md`. Both are authoritative over the pre-implementation task list that
@@ -597,12 +608,14 @@ this section carries below.
 Checkpoint — measured:
 
 - 435 tests pass with 3 gated skips, 88.73% branch coverage; the Phase 0/1, 2, and 3 suites pass
-  unchanged. One further test was added after that run and passed on its own.
+  unchanged. Tests added after that run (five in the follow-up commits, more with WP4.0.1) were
+  first measured together by WP5.0.1: 472 passed, 3 skipped, 89.40%, at `ab66ab0`.
 - The five enforcing gates pass over the smoke bundle, and each of the five gate classes blocks
   alone, with its intended reason, when a violation is injected through the same command CI
   runs. CI-observed red branches have **not** been pushed.
 - Regression coverage for accepted findings: 48 of 48 (1.0), from the registry, at corpus-test
-  granularity.
+  granularity. Since WP5.0.10, each finding has its own per-scenario pinning test
+  (`docs/phase5/wp5.0.10-acceptance.md`).
 - Smoke lane: 14 of 14 across all three lanes in 11.72 s against a 600 s target. Holdout: 17 of
   17 near-miss mutations denied, base action permitted.
 - WP4.0.7 closed: the agent corpus passes 25 of 25 on the compose fixture, agreeing with in-process
@@ -611,10 +624,20 @@ Checkpoint — measured:
   and decided verdicts. The corrected executed-unauthorized-side-effects figure is mean 0.96
   (previously published as 2.96).
 
-**Open:** everything that needs a real model endpoint (a real stochastic run, real API cost, a real
-judge, the compromised-model property against a real model), the CI-observed red-branch runs,
-precision on a human-adjudicated sample, and the independent-reviewer session. Each is recorded
-as not yet run, not as met.
+**Update (WP5.0, 2026-11-26, `docs/phase5-acceptance.md`):** the sampled corpus run, token
+calibration, a real (same-lineage) judge, and the compromised-model property were run on the
+local Ollama pin (`docs/phase5/wp5.0-real-model-acceptance.md`); the five gate classes and a
+control were observed blocking in GitHub Actions (`docs/phase5/wp5.0.7-acceptance.md`). Still
+open: hosted cost (blocked: hosted credential), the cross-family judge (blocked: different model
+family not installed), precision and the reviewer session (blocked: human), and the merge, tag,
+and CI-key release attestation (left to the author).
+
+**Open:** everything that needs a real model endpoint beyond the single local, temperature-0,
+one-scenario run of WP4.0.1 (a sampled run over the corpus, real API cost, a real judge, the
+compromised-model property against a real model), the CI-observed red-branch runs, precision on
+a human-adjudicated sample, and the independent-reviewer session. Each is recorded as not yet
+run, not as met, and each is owned by a WP5.0 row (`docs/phase5/loose-ends.md`). The recorded
+demo (WP4.5.3) is closed by WP5.0.11.
 
 #### WP4.0 — Debt carried out of Phase 3
 
@@ -707,7 +730,17 @@ uncertainty and its limitations.
 - CI demonstrably blocks each of the five classes in WP4.4, proven by a deliberately failing branch
   per class.
 
-### Phase 5 — Optional expansion
+### Phase 5 — Optional expansion — implemented on `phase-5` (2026-11-26); not merged, v1 not tagged
+
+The working plan is `planning/phase5-plan.md`; the measured results are indexed in
+`docs/phase5-acceptance.md`, one acceptance note per work package under `docs/phase5/`.
+Measured: shadow mode never executes (0 adapter calls) and every uncovered capability increase is
+refused (6 of 6 kinds); the models × defenses matrix ran on 3 stand-ins and 2 local real pins with
+every agent defense classified; telemetry leaks nothing and changes no outcome; the review UI is
+inert and read-only; the codelab lane contained 10 of 10 escape attempts under hardened runc with
+recall 1.0, FP 0, replay 30 of 30; 6 of 8 authored benchmark cases were promoted; the PRD §7
+runaway-loop detector is in the kernel (ADR 0018). **Open:** a second model family, a hosted
+endpoint, every human measurement, the imported benchmark half (no upstream data), and gVisor.
 
 Only after v1, and each item is its own work package with its own acceptance note:
 

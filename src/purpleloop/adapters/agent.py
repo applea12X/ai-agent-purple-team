@@ -32,7 +32,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from purpleloop.adapters.base import AdapterResult, Authorize
-from purpleloop.adapters.model_provider import ModelClient
+from purpleloop.adapters.model_provider import ModelClient, split_thinking, thinking_note
 from purpleloop.control.phase3_tools import (
     INTENT_OPERATIONS,
     AgentContextArgs,
@@ -202,7 +202,10 @@ class AgentAdapter:
                 prompt=prompt,
                 authorize_target=authorize_target,
             )
-        message, intents, rejected = self.parse_intents(completion.text, self.max_intents)
+        # A thinking model's leading reasoning is not part of its answer. It is removed before
+        # parsing and recorded by size and digest only; a reply without it parses unchanged.
+        visible, thinking = split_thinking(completion.text)
+        message, intents, rejected = self.parse_intents(visible, self.max_intents)
         self.turns += 1
         record = completion.record
         result = AgentResult(
@@ -223,6 +226,8 @@ class AgentAdapter:
         # interpreting prose. They are observations about the reply, not judgements about it.
         data["system_prompt_leaked"] = SYSTEM_NOTES_MARKER in message
         data["tracer_in_message"] = str(context.get("tracer", "\x00")) in message
+        if thinking is not None:
+            data["thinking"] = thinking_note(thinking, visible)
         return AdapterResult(
             status="ok", data=data, latency_ms=int((time.monotonic() - started) * 1000)
         )

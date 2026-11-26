@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import Annotated, Literal
 
 import typer
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -23,8 +25,21 @@ from purpleloop.adapters.model_provider import OpenAICompatibleProvider, Provide
 from purpleloop.control.attacker import BoundedAttacker
 from purpleloop.control.lanes import AGENT_LANE
 from purpleloop.control.manifest import ManifestVerifier
+from purpleloop.control.model_config import (
+    ModelConfigError,
+    ModelSettings,
+    build_pin,
+    with_seed,
+)
 from purpleloop.control.phase3_tools import INTENT_OPERATIONS
 from purpleloop.control.plan_compiler import compile_plan
+from purpleloop.judge_report import (
+    DEFAULT_JUDGE_TIMEOUT_SECONDS,
+    DEFAULT_JUDGE_TOKEN_BUDGET,
+    JudgeRunConfig,
+    JudgeUnavailable,
+    run_networked_judge_report,
+)
 from purpleloop.reporting.bundle import inventory, reports, verify_bundle, write_json
 from purpleloop.runtime.demo import ROOT
 from purpleloop.runtime.inspect_bridge import evaluate_runner
@@ -46,11 +61,21 @@ from purpleloop.runtime.supportlab import (
 )
 from purpleloop.schemas.authorization import AuthorizationManifest
 from purpleloop.schemas.phase1 import Phase1Scenario, RunSummary, load_scenario, scenario_paths
-from purpleloop.schemas.phase3 import DecodingParameters, ModelPin
+from purpleloop.schemas.phase3 import ModelPin
 from purpleloop.schemas.phase4 import StochasticRunOutcome
-from purpleloop.scoring.evaluator_redteam import agreement, load_corpus, resistance
+from purpleloop.scoring.evaluator_redteam import (
+    agreement,
+    load_corpus,
+    require_frozen,
+    resistance,
+)
 from purpleloop.scoring.judge import HybridJudge, ScriptedJudge
-from purpleloop.scoring.phase4 import classify_stochastic_failure, reproduction_record
+from purpleloop.scoring.phase4 import (
+    BUDGET_REASONS,
+    ENDPOINT_REASONS,
+    classify_stochastic_failure,
+    reproduction_record,
+)
 
 SCENARIOS = ROOT / "scenarios" / "agent"
 REDTEAM = ROOT / "scenarios" / "evaluator-redteam" / "cases.json"
@@ -58,6 +83,57 @@ CREDENTIAL_ENV = "PURPLELOOP_MODEL_API_KEY"
 
 #: Where one repetition writes its bundle. Each repetition is its own verifiable bundle.
 DirectoryFor = Callable[[int], Path]
+
+# Model-plane options shared by every networked command. Each names its environment variable;
+# the command line wins over the environment, and the environment over the earlier default.
+TemperatureOption = Annotated[
+    float | None, typer.Option(help="Sampling temperature (env PURPLELOOP_MODEL_TEMPERATURE; 0)")
+]
+TopPOption = Annotated[
+    float | None, typer.Option(help="Nucleus top_p (env PURPLELOOP_MODEL_TOP_P; 1)")
+]
+ModelSeedOption = Annotated[
+    str | None,
+    typer.Option(help="Model decoding seed, or 'none' (env PURPLELOOP_MODEL_SEED; 42)"),
+]
+MaxTokensOption = Annotated[
+    int | None,
+    typer.Option(help="Output token cap per call (env PURPLELOOP_MODEL_MAX_OUTPUT_TOKENS; 512)"),
+]
+PriceInputOption = Annotated[
+    int | None,
+    typer.Option(
+        help=(
+            "Input price, micro-USD per 1k tokens "
+            "(env PURPLELOOP_MODEL_PRICE_INPUT_MICROUSD_PER_1K)"
+        )
+    ),
+]
+PriceOutputOption = Annotated[
+    int | None,
+    typer.Option(
+        help=(
+            "Output price, micro-USD per 1k tokens "
+            "(env PURPLELOOP_MODEL_PRICE_OUTPUT_MICROUSD_PER_1K)"
+        )
+    ),
+]
+DeclaredFreeOption = Annotated[
+    str | None,
+    typer.Option(
+        help="Acknowledge a hosted model as free by naming its model id (command line only)"
+    ),
+]
+ModelIdOption = Annotated[str | None, typer.Option(help="Model id (env PURPLELOOP_MODEL_ID)")]
+ModelVersionOption = Annotated[
+    str | None, typer.Option(help="Model version or digest (env PURPLELOOP_MODEL_VERSION)")
+]
+CostBudgetOption = Annotated[
+    int | None,
+    typer.Option(
+        help="Signed per-run cost cap, micro-USD (env PURPLELOOP_MODEL_COST_BUDGET_MICROUSD; 1e6)"
+    ),
+]
 
 
 class AgentFixtureMode(StrEnum):
@@ -77,6 +153,53 @@ class ModelUnavailableForLane(RuntimeError):
     reason_code = "STOCHASTIC_LANE_UNAVAILABLE"
 
 
+def run_outcome(
+    summary: RunSummary,
+) -> Literal["pass", "fail", "budget-stop", "endpoint-error"]:
+    """A completed run's outcome. A run its signed cap stopped is a budget stop, not a failure,
+    and a run the endpoint broke is an endpoint error -- the vocabulary keeps all three apart.
+
+    Before the price was configurable no networked run could exhaust its cost cap, so a stop
+    here was never seen; with a priced hosted pin it is the expected way a cap shows itself, and
+    reporting it as a scenario failure would conflate the budget with the defense.
+    """
+    if summary.status == "passed":
+        return "pass"
+    if summary.reason in BUDGET_REASONS:
+        return "budget-stop"
+    if summary.reason in ENDPOINT_REASONS:
+        return "endpoint-error"
+    return "fail"
+
+
+#: Most severe first. A repetition set's outcome is its worst repetition's.
+_OUTCOME_SEVERITY = ("fail", "endpoint-error", "budget-stop", "pass")
+
+
+def repetition_outcome(
+    summaries: Sequence[RunSummary],
+) -> tuple[RunSummary, Literal["pass", "fail", "budget-stop", "endpoint-error"], str]:
+    """The outcome of a set of completed repetitions, with the repetition it came from.
+
+    A scenario passes only when every completed repetition passed. The outcome used to be the
+    first repetition's alone, which was harmless while every repetition took the same path
+    (temperature 0, fixed seed) and wrong under sampling: the WP5.0.2 run on a real model
+    reported scenarios as passing whose later repetitions regressed, and as failing when only
+    the first did not pass. The detail names every repetition's status so nothing is averaged.
+    """
+    if not summaries:
+        raise ValueError("no completed repetition to classify")
+    outcomes = [run_outcome(summary) for summary in summaries]
+    worst = min(outcomes, key=_OUTCOME_SEVERITY.index)
+    detail = (
+        ""
+        if len(summaries) == 1
+        else "repetitions: "
+        + " ".join(f"{index}={summary.status}" for index, summary in enumerate(summaries))
+    )
+    return summaries[outcomes.index(worst)], worst, detail
+
+
 def _write_outcome(output_dir: Path, outcome: StochasticRunOutcome) -> None:
     """Surface the run's classified outcome. A failure is surfaced, never silently tolerated.
 
@@ -93,8 +216,91 @@ def _write_outcome(output_dir: Path, outcome: StochasticRunOutcome) -> None:
         pass
 
 
-def networked_provider(endpoint: str, profile: str) -> tuple[Provider, ModelPin]:
-    """Build a networked provider, or refuse. There is no fallback to the offline provider."""
+class SeedPolicy(StrEnum):
+    """How the model seed varies across the repetitions of one scenario.
+
+    ``fixed`` is the earlier behaviour: every repetition runs under the same seed. Under sampling
+    that makes a seeded provider return the same reply every time, so a repetition set would
+    report a reproduction of 1.0 that measures the seed, not the model. ``per-repetition`` gives
+    repetition *i* the seed ``seed + i``; each repetition's manifest signs its own pin, so every
+    repetition is still individually reproducible and the set measures sampling variance.
+    """
+
+    FIXED = "fixed"
+    PER_REPETITION = "per-repetition"
+
+
+SeedPolicyOption = Annotated[
+    SeedPolicy | None,
+    typer.Option(help="Seed across repetitions (env PURPLELOOP_MODEL_SEED_POLICY; fixed)"),
+]
+
+#: Signed per-run cost cap when none is configured: the value every earlier manifest carried.
+DEFAULT_COST_BUDGET_MICROUSD = 1_000_000
+
+
+def resolve_seed_policy(value: SeedPolicy | None) -> SeedPolicy:
+    if value is not None:
+        return value
+    raw = os.environ.get("PURPLELOOP_MODEL_SEED_POLICY")
+    try:
+        return SeedPolicy(raw) if raw else SeedPolicy.FIXED
+    except ValueError as exc:
+        raise ModelConfigError(f"unknown seed policy {raw!r}") from exc
+
+
+def resolve_cost_budget(value: int | None, *, name: str = "PURPLELOOP_MODEL") -> int:
+    if value is not None:
+        return value
+    raw = os.environ.get(f"{name}_COST_BUDGET_MICROUSD")
+    if not raw:
+        return DEFAULT_COST_BUDGET_MICROUSD
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ModelConfigError(f"{name}_COST_BUDGET_MICROUSD must be an integer") from exc
+
+
+def seed_policy_label(policy: SeedPolicy, pin: ModelPin | None) -> dict[str, str]:
+    """The repetition set's ``seed_policy`` argument; empty (the old label) under a fixed seed."""
+    if policy == SeedPolicy.FIXED or pin is None:
+        return {}
+    return {"seed_policy": f"model-seed-{pin.decoding.seed}-plus-repetition-index"}
+
+
+def refuse_offline_model_options(
+    settings: ModelSettings, seed_policy: SeedPolicy | None, cost_budget: int | None
+) -> None:
+    """A model option on an offline run would be silently ignored, so it is refused instead.
+
+    Only command-line options are checked: environment variables configure the networked lane
+    and are legitimately present in a shell that also runs offline commands.
+    """
+    given = [
+        name
+        for name, value in (
+            *vars(settings).items(),
+            ("seed_policy", seed_policy),
+            ("cost_budget_microusd", cost_budget),
+        )
+        if value is not None
+    ]
+    if given:
+        raise ModelConfigError(
+            f"{', '.join(given)} configure a networked model and need --endpoint; the offline "
+            "provider would ignore them"
+        )
+
+
+def networked_provider(
+    endpoint: str, profile: str, settings: ModelSettings | None = None
+) -> tuple[Provider, ModelPin]:
+    """Build a networked provider, or refuse. There is no fallback to the offline provider.
+
+    The credential is checked first, so a hosted lane without one is still a recorded skip. A
+    hosted lane *with* one but without a declared price is then refused outright: running it
+    would record its cost as zero and leave the signed cost cap unable to fire.
+    """
     credential = os.environ.get(CREDENTIAL_ENV)
     if profile == "openai-compatible" and not credential:
         raise ModelUnavailableForLane(
@@ -102,13 +308,11 @@ def networked_provider(endpoint: str, profile: str) -> tuple[Provider, ModelPin]
         )
     from purpleloop.adapters.agent import SYSTEM_PROMPT_HASH
 
-    pin = ModelPin(
+    pin = build_pin(
         pin_id="networked",
-        provider=profile,  # type: ignore[arg-type]
-        model_id=os.environ.get("PURPLELOOP_MODEL_ID", "unspecified-model"),
-        model_version=os.environ.get("PURPLELOOP_MODEL_VERSION"),
-        decoding=DecodingParameters(seed=42),
+        profile=profile,
         system_prompt_hash=SYSTEM_PROMPT_HASH,
+        settings=settings or ModelSettings(),
     )
     provider = OpenAICompatibleProvider(
         base_url=endpoint,
@@ -149,24 +353,38 @@ def _runner_factory(
     pin_id: str,
     pin: ModelPin | None,
     fixture_mode: AgentFixtureMode = AgentFixtureMode.IN_PROCESS,
+    seed_policy: SeedPolicy = SeedPolicy.FIXED,
+    cost_microusd_budget: int = DEFAULT_COST_BUDGET_MICROUSD,
 ) -> tuple[AuthorizationManifest, RunnerFactory, Execute]:
-    # The manifest signs the origin the provider will actually connect to, not the URL it was
-    # given: a base URL carries an API path (Ollama's and most hosted APIs' ``/v1``) that a
-    # signed model asset may not, and signing anything else would let the two disagree.
-    manifest = supportlab_agent_manifest(
-        manifest_key,
-        seed=seed,
-        judge=judge,
-        model_endpoint=provider.endpoint if provider is not None else None,
-        model_pin=pin,
-    )
+    def sign(run_pin: ModelPin | None) -> AuthorizationManifest:
+        # The manifest signs the origin the provider will actually connect to, not the URL it was
+        # given: a base URL carries an API path (Ollama's and most hosted APIs' ``/v1``) that a
+        # signed model asset may not, and signing anything else would let the two disagree.
+        return supportlab_agent_manifest(
+            manifest_key,
+            seed=seed,
+            judge=judge,
+            model_endpoint=provider.endpoint if provider is not None else None,
+            model_pin=run_pin,
+            cost_microusd_budget=cost_microusd_budget,
+        )
+
+    manifest = sign(pin)
     verifier = ManifestVerifier({KEY_ID: manifest_key.public_key()})
     verifier.verify(manifest)
+    if seed_policy == SeedPolicy.PER_REPETITION and (pin is None or pin.decoding.seed is None):
+        raise ModelConfigError("the per-repetition seed policy needs a seeded networked pin")
     # The fixture each repetition will run against, created in the factory and started by the
     # execute wrapper: a compose fixture needs an async start the synchronous factory cannot do.
-    pending: list[InProcessSupportlab | ComposeSupportlab] = []
+    # Each entry carries the manifest that repetition was built under.
+    pending: list[tuple[InProcessSupportlab | ComposeSupportlab, AuthorizationManifest]] = []
 
     def factory(index: int) -> tuple[PurpleTeamRunner, Path]:
+        run_manifest = manifest
+        if seed_policy == SeedPolicy.PER_REPETITION:
+            assert pin is not None and pin.decoding.seed is not None
+            run_manifest = sign(with_seed(pin, pin.decoding.seed + index))
+            verifier.verify(run_manifest)
         tokens = actor_credentials()
         control = actor_credentials()["customer-a"]
         directory = directory_for(index)
@@ -188,10 +406,10 @@ def _runner_factory(
             )
         else:
             fixture = InProcessSupportlab(tokens, control)
-        pending.append(fixture)
+        pending.append((fixture, run_manifest))
         runner = build_agent_runner(
             directory,
-            manifest,
+            run_manifest,
             verifier,
             actor_tokens=tokens,
             control=control,
@@ -209,10 +427,15 @@ def _runner_factory(
         run_id: str,
         directory: Path,
     ) -> RunSummary:
-        fixture = pending.pop()
+        fixture, built_under = pending.pop()
         if isinstance(fixture, ComposeSupportlab):  # pragma: no cover - container lane
             await fixture.start()
-        return await _inspect_execute(runner, scenario, run_manifest, run_id, directory, pin)
+        # Under a fixed seed this is the manifest passed in. Under per-repetition seeding it is
+        # the repetition's own, so the signed pin and the pin the model client calls with agree.
+        run_pin = pin
+        if built_under is not run_manifest and built_under.phase3 is not None and pin is not None:
+            run_pin = built_under.phase3.pin(pin.pin_id)
+        return await _inspect_execute(runner, scenario, built_under, run_id, directory, run_pin)
 
     return manifest, factory, execute
 
@@ -274,6 +497,39 @@ async def run_offline_corpus(
     return scenarios, summaries
 
 
+def _networked_judge_report(output_dir: Path, config: JudgeRunConfig) -> None:
+    try:
+        payload = run_networked_judge_report(load_corpus(REDTEAM), config, output_dir)
+    except JudgeUnavailable as exc:
+        typer.echo(f"SKIPPED: {exc}", err=True)
+        raise typer.Exit(0) from None
+    except Exception as exc:  # noqa: BLE001 -- every stop is reported with its reason code
+        reason = str(getattr(exc, "reason_code", "") or type(exc).__name__)
+        typer.echo(f"FAILED: {reason}: {exc}", err=True)
+        raise typer.Exit(1) from None
+    for trial in payload["trials"]:
+        agreement_ = trial["agreement"]
+        control = trial.get("negative_control_without_delimiting")
+        typer.echo(
+            f"trial={trial['trial']} seed={trial['seed']} "
+            f"resistance={trial['hardened']['resistance']:.3f} "
+            + (f"(negative control {control['resistance']:.3f}) " if control else "")
+            + f"alpha={agreement_['krippendorff_alpha']:.3f} "
+            f"[{agreement_['alpha_ci_low']:.3f},{agreement_['alpha_ci_high']:.3f}] "
+            f"n={agreement_['n']} kappa={agreement_['cohen_kappa']} "
+            f"kappa_n={agreement_['kappa_n']} swap={agreement_['order_swap_consistency']:.3f} "
+            f"critical_false_passes={len(trial['hardened']['critical_false_passes'])}"
+        )
+    pooled = payload["pooled_agreement"]
+    calls = payload["model_calls"]
+    typer.echo(
+        f"pooled alpha={pooled['krippendorff_alpha']:.3f} n={pooled['n']} (case-trials) "
+        f"calls={calls['calls']} tokens={calls['tokens']} cost_microusd={calls['cost_microusd']} "
+        f"thinking_stripped={payload['thinking']['stripped']} "
+        f"unparseable={payload['thinking']['unparseable_replies']} (advisory)"
+    )
+
+
 def register(app: typer.Typer) -> None:
     @app.command("agent-run")
     def agent_run(
@@ -286,13 +542,41 @@ def register(app: typer.Typer) -> None:
         endpoint: str | None = None,
         profile: str = "openai-compatible",
         fixture: AgentFixtureMode = AgentFixtureMode.IN_PROCESS,
+        temperature: TemperatureOption = None,
+        top_p: TopPOption = None,
+        model_seed: ModelSeedOption = None,
+        max_output_tokens: MaxTokensOption = None,
+        price_input_microusd_per_1k: PriceInputOption = None,
+        price_output_microusd_per_1k: PriceOutputOption = None,
+        declared_free: DeclaredFreeOption = None,
+        model_id: ModelIdOption = None,
+        model_version: ModelVersionOption = None,
+        seed_policy: SeedPolicyOption = None,
+        cost_budget_microusd: CostBudgetOption = None,
     ) -> None:
         """Run one agent scenario, optionally repeated, judged, and probed by the attacker."""
         provider: Provider | None = None
         pin: ModelPin | None = None
+        settings = ModelSettings(
+            temperature=temperature,
+            top_p=top_p,
+            seed=model_seed,
+            max_output_tokens=max_output_tokens,
+            price_input_microusd_per_1k=price_input_microusd_per_1k,
+            price_output_microusd_per_1k=price_output_microusd_per_1k,
+            declared_free=declared_free,
+            model_id=model_id,
+            model_version=model_version,
+        )
         try:
+            policy = SeedPolicy.FIXED
+            cost_budget = DEFAULT_COST_BUDGET_MICROUSD
             if endpoint is not None:
-                provider, pin = networked_provider(endpoint, profile)
+                provider, pin = networked_provider(endpoint, profile, settings)
+                policy = resolve_seed_policy(seed_policy)
+                cost_budget = resolve_cost_budget(cost_budget_microusd)
+            else:
+                refuse_offline_model_options(settings, seed_policy, cost_budget_microusd)
             scenario = load_scenario(scenario_path)
             key = Ed25519PrivateKey.generate()
             manifest, factory, execute = _runner_factory(
@@ -312,6 +596,8 @@ def register(app: typer.Typer) -> None:
                 pin_id="networked" if pin else "offline-scripted",
                 pin=pin,
                 fixture_mode=fixture,
+                seed_policy=policy,
+                cost_microusd_budget=cost_budget,
             )
             compile_plan(scenario, manifest, lane=AGENT_LANE)
             report, summaries = asyncio.run(
@@ -322,6 +608,7 @@ def register(app: typer.Typer) -> None:
                     repetitions=repetitions,
                     run_id=scenario.scenario_id,
                     execute=execute,
+                    **seed_policy_label(policy, pin),
                 )
             )
         except ModelUnavailableForLane as exc:
@@ -355,7 +642,7 @@ def register(app: typer.Typer) -> None:
             )
             typer.echo("FAILED: every repetition was excluded", err=True)
             raise typer.Exit(1)
-        enriched = apply_reproducibility(summaries[0], report)
+        decisive, outcome, detail = repetition_outcome(summaries)
         write_json(output_dir / "stochastic.json", report.model_dump(mode="json"))
         if repetitions > 1:
             # The stochastic lane's own replay number, beside -- never inside -- the
@@ -367,27 +654,113 @@ def register(app: typer.Typer) -> None:
         _write_outcome(
             output_dir,
             StochasticRunOutcome(
-                outcome="pass" if enriched.status == "passed" else "fail",
-                reason_code=enriched.reason or enriched.status.upper(),
+                outcome=outcome,
+                reason_code=decisive.reason or decisive.status.upper(),
+                detail=detail,
                 scenario_id=scenario.scenario_id,
                 model_pin_id=pin_id,
             ),
         )
         typer.echo(
-            f"{enriched.status.upper()} n={report.repetitions.completed} "
+            f"{decisive.status.upper()} n={report.repetitions.completed} "
             f"attack_success={report.attack_success.value:.3f} "
             f"clean_utility={report.clean_utility.value:.3f} "
             f"utility_under_attack={report.utility_under_attack.value:.3f} "
             f"side_effects={report.executed_unauthorized_side_effects.value:.3f}"
         )
-        if enriched.status != "passed":
+        if outcome != "pass":
             raise typer.Exit(1)
 
     @app.command("judge-report")
-    def judge_report(output_dir: Path = Path("artifacts/judge")) -> None:
-        """Score the judge against the frozen evaluator red-team corpus."""
+    def judge_report(
+        output_dir: Path = Path("artifacts/judge"),
+        judge_endpoint: Annotated[
+            str | None,
+            # Deliberately not read from the environment: `make judge-report` and CI score the
+            # scripted stand-in, and a variable left in a shell must not turn that into a paid,
+            # networked run. `make judge-report-networked` passes PURPLELOOP_JUDGE_ENDPOINT.
+            typer.Option(help="Networked judge base URL; omitted, the scripted stand-in is scored"),
+        ] = None,
+        judge_profile: Annotated[
+            str, typer.Option(envvar="PURPLELOOP_JUDGE_PROFILE")
+        ] = "openai-compatible",
+        trials: Annotated[
+            int, typer.Option(envvar="PURPLELOOP_JUDGE_TRIALS", help="Passes over the corpus")
+        ] = 1,
+        negative_control: bool = True,
+        judge_model_id: Annotated[
+            str | None, typer.Option(help="(env PURPLELOOP_JUDGE_MODEL_ID)")
+        ] = None,
+        judge_model_version: Annotated[
+            str | None, typer.Option(help="(env PURPLELOOP_JUDGE_MODEL_VERSION)")
+        ] = None,
+        judge_temperature: Annotated[
+            float | None, typer.Option(help="(env PURPLELOOP_JUDGE_TEMPERATURE; 0)")
+        ] = None,
+        judge_top_p: Annotated[
+            float | None, typer.Option(help="(env PURPLELOOP_JUDGE_TOP_P; 1)")
+        ] = None,
+        judge_seed: Annotated[
+            str | None, typer.Option(help="Seed or 'none' (env PURPLELOOP_JUDGE_SEED; 42)")
+        ] = None,
+        judge_max_output_tokens: Annotated[
+            int | None, typer.Option(help="(env PURPLELOOP_JUDGE_MAX_OUTPUT_TOKENS; 512)")
+        ] = None,
+        judge_price_input_microusd_per_1k: Annotated[
+            int | None, typer.Option(help="(env PURPLELOOP_JUDGE_PRICE_INPUT_MICROUSD_PER_1K)")
+        ] = None,
+        judge_price_output_microusd_per_1k: Annotated[
+            int | None, typer.Option(help="(env PURPLELOOP_JUDGE_PRICE_OUTPUT_MICROUSD_PER_1K)")
+        ] = None,
+        judge_declared_free: Annotated[
+            str | None, typer.Option(help="Acknowledge a hosted judge as free by its model id")
+        ] = None,
+        judge_timeout_seconds: Annotated[
+            float, typer.Option(envvar="PURPLELOOP_JUDGE_TIMEOUT_SECONDS")
+        ] = DEFAULT_JUDGE_TIMEOUT_SECONDS,
+        judge_token_budget: Annotated[
+            int, typer.Option(envvar="PURPLELOOP_JUDGE_TOKEN_BUDGET")
+        ] = DEFAULT_JUDGE_TOKEN_BUDGET,
+        judge_cost_budget_microusd: Annotated[
+            int | None, typer.Option(help="(env PURPLELOOP_JUDGE_COST_BUDGET_MICROUSD; 1e6)")
+        ] = None,
+    ) -> None:
+        """Score the judge against the frozen evaluator red-team corpus.
+
+        Without ``--judge-endpoint`` this scores the scripted stand-in, exactly as in Phase 3.
+        With it, a real pinned judge is scored over ``--trials`` passes with order swaps; the
+        result is advisory and the command exits zero when it completes.
+        """
+        if judge_endpoint is not None:
+            settings = ModelSettings(
+                temperature=judge_temperature,
+                top_p=judge_top_p,
+                seed=judge_seed,
+                max_output_tokens=judge_max_output_tokens,
+                price_input_microusd_per_1k=judge_price_input_microusd_per_1k,
+                price_output_microusd_per_1k=judge_price_output_microusd_per_1k,
+                declared_free=judge_declared_free,
+                model_id=judge_model_id,
+                model_version=judge_model_version,
+            )
+            _networked_judge_report(
+                output_dir,
+                JudgeRunConfig(
+                    endpoint=judge_endpoint,
+                    profile=judge_profile,
+                    settings=settings,
+                    trials=trials,
+                    negative_control=negative_control,
+                    timeout_seconds=judge_timeout_seconds,
+                    token_budget=judge_token_budget,
+                    cost_microusd_budget=resolve_cost_budget(
+                        judge_cost_budget_microusd, name="PURPLELOOP_JUDGE"
+                    ),
+                ),
+            )
+            return
         try:
-            corpus = load_corpus(REDTEAM)
+            corpus = require_frozen(load_corpus(REDTEAM))
             hardened = resistance(HybridJudge(ScriptedJudge()), corpus)
             undelimited = resistance(HybridJudge(ScriptedJudge()), corpus, delimit=False)
             scores = agreement(HybridJudge(ScriptedJudge()), corpus)
@@ -431,75 +804,293 @@ def register(app: typer.Typer) -> None:
         """Run the whole agent corpus offline, write the suite bundle, and verify it."""
         root = output_dir / datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
         key = Ed25519PrivateKey.generate()
-
-        names: list[str] = []
-
-        def bundle_name(scenario_id: str, index: int) -> str:
-            return scenario_id if repetitions == 1 else f"{scenario_id}-rep-{index}"
-
-        async def run_suite() -> list[RunSummary]:
-            summaries: list[RunSummary] = []
-            for path in scenario_paths(SCENARIOS):
-                scenario = load_scenario(path)
-
-                def directory_for(index: int, sid: str = scenario.scenario_id) -> Path:
-                    return root / bundle_name(sid, index)
-
-                manifest, factory, execute = _runner_factory(
+        try:
+            suite = asyncio.run(
+                _run_suite(
+                    root,
                     key,
-                    directory_for,
                     seed=seed,
+                    repetitions=repetitions,
                     judge=judge,
                     attacker=attacker,
-                    provider=None,
-                    pin_id="offline-scripted",
-                    pin=None,
-                    fixture_mode=fixture,
+                    fixture=fixture,
                 )
-                report, runs = await run_repetitions(
-                    scenario,
-                    manifest,
-                    factory,
-                    repetitions=repetitions,
-                    run_id=scenario.scenario_id,
-                    execute=execute,
-                )
-                if not runs:
-                    raise RuntimeError(f"{scenario.scenario_id}: every repetition was excluded")
-                names.extend(bundle_name(scenario.scenario_id, index) for index in range(len(runs)))
-                # The aggregate belongs to the scenario, not to any one repetition's bundle.
-                # Written before the inventory so the suite's digests cover it.
-                write_json(
-                    root / "stochastic" / f"{scenario.scenario_id}.json",
-                    report.model_dump(mode="json"),
-                )
-                summaries.append(apply_reproducibility(runs[0], report))
-                typer.echo(
-                    f"{path.stem}: {summaries[-1].status} (n={report.repetitions.completed})"
-                )
-            return summaries
-
-        try:
-            summaries = asyncio.run(run_suite())
-            reports(root, summaries)
-            (root / "authorization-public.pem").write_bytes(
-                key.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
             )
-            write_json(
-                root / "suite.json",
+            _finish_suite(
+                root,
+                key,
+                suite,
                 {
                     "schema_version": "1.3.0",
                     "lane": "supportlab-agent",
                     "model_provider": "offline-scripted",
                     "repetitions": repetitions,
-                    "scenarios": names,
+                    "scenarios": suite.names,
                 },
             )
-            inventory(root, complete=True)
-            verify_bundle(root)
         except (OSError, ValueError, RuntimeError) as exc:
             typer.echo(f"FAILED: {exc}; partial evidence: {root.resolve()}", err=True)
             raise typer.Exit(1) from None
         typer.echo(f"Verified report: {(root / 'report.html').resolve()}")
-        if any(summary.status != "passed" for summary in summaries):
+        if any(summary.status != "passed" for summary in suite.summaries):
             raise typer.Exit(1)
+
+    @app.command("agent-corpus")
+    def agent_corpus(
+        endpoint: Annotated[
+            str, typer.Option(envvar="PURPLELOOP_MODEL_ENDPOINT", help="Model base URL")
+        ],
+        output_dir: Path = Path("artifacts/agent-corpus"),
+        profile: Annotated[
+            str, typer.Option(envvar="PURPLELOOP_MODEL_PROFILE")
+        ] = "openai-compatible",
+        seed: int = 42,
+        repetitions: Annotated[int, typer.Option(envvar="PURPLELOOP_MODEL_REPETITIONS")] = 5,
+        judge: bool = False,
+        attacker: bool = False,
+        fixture: AgentFixtureMode = AgentFixtureMode.IN_PROCESS,
+        only: Annotated[
+            list[str] | None, typer.Option(help="Run only these scenario ids (repeatable)")
+        ] = None,
+        temperature: TemperatureOption = None,
+        top_p: TopPOption = None,
+        model_seed: ModelSeedOption = None,
+        max_output_tokens: MaxTokensOption = None,
+        price_input_microusd_per_1k: PriceInputOption = None,
+        price_output_microusd_per_1k: PriceOutputOption = None,
+        declared_free: DeclaredFreeOption = None,
+        model_id: ModelIdOption = None,
+        model_version: ModelVersionOption = None,
+        seed_policy: SeedPolicyOption = None,
+        cost_budget_microusd: CostBudgetOption = None,
+        suite_cost_budget_microusd: Annotated[
+            int | None,
+            typer.Option(
+                envvar="PURPLELOOP_MODEL_SUITE_COST_BUDGET_MICROUSD",
+                help="Stop starting scenarios once the suite has spent this much",
+            ),
+        ] = None,
+    ) -> None:
+        """Run the agent corpus against a networked model, repeated, and verify the suite.
+
+        The networked counterpart of ``agent-demo``: every scenario under the same signed pin,
+        each repetition its own verifiable bundle, a classified outcome per scenario, and one
+        suite bundle verified at the end. A scenario whose every repetition was excluded is
+        recorded and the suite continues, so one endpoint hiccup does not discard the rest.
+        """
+        settings = ModelSettings(
+            temperature=temperature,
+            top_p=top_p,
+            seed=model_seed,
+            max_output_tokens=max_output_tokens,
+            price_input_microusd_per_1k=price_input_microusd_per_1k,
+            price_output_microusd_per_1k=price_output_microusd_per_1k,
+            declared_free=declared_free,
+            model_id=model_id,
+            model_version=model_version,
+        )
+        root = output_dir / datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        try:
+            provider, pin = networked_provider(endpoint, profile, settings)
+            policy = resolve_seed_policy(seed_policy)
+            cost_budget = resolve_cost_budget(cost_budget_microusd)
+        except ModelUnavailableForLane as exc:
+            typer.echo(f"SKIPPED: {exc}", err=True)
+            raise typer.Exit(0) from None
+        except ValueError as exc:
+            reason = str(getattr(exc, "reason_code", "") or type(exc).__name__)
+            typer.echo(f"FAILED: {reason}: {exc}", err=True)
+            raise typer.Exit(1) from None
+        key = Ed25519PrivateKey.generate()
+        try:
+            suite = asyncio.run(
+                _run_suite(
+                    root,
+                    key,
+                    seed=seed,
+                    repetitions=repetitions,
+                    judge=judge,
+                    attacker=attacker,
+                    fixture=fixture,
+                    provider=provider,
+                    pin=pin,
+                    seed_policy=policy,
+                    cost_budget=cost_budget,
+                    suite_cost_budget=suite_cost_budget_microusd,
+                    only=frozenset(only) if only else None,
+                )
+            )
+            _finish_suite(
+                root,
+                key,
+                suite,
+                {
+                    "schema_version": "1.3.0",
+                    "lane": "supportlab-agent",
+                    "model_provider": pin.provider,
+                    "model_pin": pin.model_dump(mode="json"),
+                    "seed_policy": policy.value,
+                    "cost_microusd_budget_per_run": cost_budget,
+                    "suite_cost_budget_microusd": suite_cost_budget_microusd,
+                    "repetitions": repetitions,
+                    "scenarios": suite.names,
+                    "outcomes": {
+                        outcome.scenario_id: outcome.outcome
+                        for outcome in suite.outcomes
+                        if outcome.scenario_id
+                    },
+                    "cost_microusd": suite.cost_microusd,
+                    "not_run": suite.not_run,
+                },
+            )
+        except (OSError, ValueError, RuntimeError) as exc:
+            typer.echo(f"FAILED: {exc}; partial evidence: {root.resolve()}", err=True)
+            raise typer.Exit(1) from None
+        counts: dict[str, int] = {}
+        for outcome in suite.outcomes:
+            counts[outcome.outcome] = counts.get(outcome.outcome, 0) + 1
+        typer.echo(
+            "SUITE "
+            + " ".join(f"{name}={count}" for name, count in sorted(counts.items()))
+            + f" not_run={len(suite.not_run)} cost_microusd={suite.cost_microusd}"
+        )
+        typer.echo(f"Verified report: {(root / 'report.html').resolve()}")
+        if suite.not_run or any(outcome.outcome != "pass" for outcome in suite.outcomes):
+            raise typer.Exit(1)
+
+
+@dataclass
+class SuiteRun:
+    summaries: list[RunSummary] = field(default_factory=list)
+    names: list[str] = field(default_factory=list)
+    outcomes: list[StochasticRunOutcome] = field(default_factory=list)
+    cost_microusd: int = 0
+    not_run: list[str] = field(default_factory=list)
+
+
+async def _run_suite(
+    root: Path,
+    key: Ed25519PrivateKey,
+    *,
+    seed: int,
+    repetitions: int,
+    judge: bool,
+    attacker: bool,
+    fixture: AgentFixtureMode,
+    provider: Provider | None = None,
+    pin: ModelPin | None = None,
+    seed_policy: SeedPolicy = SeedPolicy.FIXED,
+    cost_budget: int = DEFAULT_COST_BUDGET_MICROUSD,
+    suite_cost_budget: int | None = None,
+    only: frozenset[str] | None = None,
+) -> SuiteRun:
+    """Every agent scenario through the Inspect bridge, offline or against one networked pin.
+
+    Offline, an all-excluded scenario aborts the suite, as ``agent-demo`` always has. Networked,
+    it is recorded as an endpoint error and the suite continues; and once the suite has spent
+    ``suite_cost_budget``, no further scenario is started -- the remainder is listed as not run.
+    """
+    suite = SuiteRun()
+    networked = provider is not None
+    pin_id = "networked" if pin is not None else "offline-scripted"
+
+    def bundle_name(scenario_id: str, index: int) -> str:
+        return scenario_id if repetitions == 1 else f"{scenario_id}-rep-{index}"
+
+    paths = [path for path in scenario_paths(SCENARIOS) if only is None or path.stem in only]
+    if only is not None and len(paths) != len(only):
+        known = {path.stem for path in scenario_paths(SCENARIOS)}
+        raise ValueError(f"unknown scenario ids: {', '.join(sorted(only - known))}")
+    for path in paths:
+        scenario = load_scenario(path)
+        if suite_cost_budget is not None and suite.cost_microusd >= suite_cost_budget:
+            suite.not_run.append(scenario.scenario_id)
+            continue
+
+        def directory_for(index: int, sid: str = scenario.scenario_id) -> Path:
+            return root / bundle_name(sid, index)
+
+        manifest, factory, execute = _runner_factory(
+            key,
+            directory_for,
+            seed=seed,
+            judge=judge,
+            attacker=attacker,
+            provider=provider,
+            pin_id=pin_id,
+            pin=pin,
+            fixture_mode=fixture,
+            seed_policy=seed_policy,
+            cost_microusd_budget=cost_budget,
+        )
+        report, runs = await run_repetitions(
+            scenario,
+            manifest,
+            factory,
+            repetitions=repetitions,
+            run_id=scenario.scenario_id,
+            execute=execute,
+            **seed_policy_label(seed_policy, pin),
+        )
+        suite.cost_microusd += sum(record.cost_microusd for record in report.repetitions.records)
+        if not runs:
+            if not networked:
+                raise RuntimeError(f"{scenario.scenario_id}: every repetition was excluded")
+            outcome = StochasticRunOutcome(
+                outcome="endpoint-error",
+                reason_code="EVERY_REPETITION_EXCLUDED",
+                detail="; ".join(report.repetitions.exclusion_reasons)[:2000],
+                scenario_id=scenario.scenario_id,
+                model_pin_id=pin_id,
+            )
+            suite.outcomes.append(outcome)
+            write_json(
+                root / "outcomes" / f"{scenario.scenario_id}.json", outcome.model_dump(mode="json")
+            )
+            typer.echo(f"{path.stem}: endpoint-error (every repetition excluded)")
+            continue
+        suite.names.extend(bundle_name(scenario.scenario_id, index) for index in range(len(runs)))
+        # The aggregate belongs to the scenario, not to any one repetition's bundle.
+        # Written before the inventory so the suite's digests cover it.
+        write_json(
+            root / "stochastic" / f"{scenario.scenario_id}.json",
+            report.model_dump(mode="json"),
+        )
+        if networked and len(runs) > 1:
+            write_json(
+                root / "reproduction" / f"{scenario.scenario_id}.json",
+                reproduction_record(report.repetitions).model_dump(mode="json"),
+            )
+        # The report shows the first repetition's evidence, as it always has; the outcome is
+        # the whole set's, so a later repetition's regression is never hidden behind it.
+        enriched = apply_reproducibility(runs[0], report)
+        suite.summaries.append(enriched)
+        decisive, verdict, detail = repetition_outcome(runs)
+        if networked:
+            outcome = StochasticRunOutcome(
+                outcome=verdict,
+                reason_code=decisive.reason or decisive.status.upper(),
+                detail=detail,
+                scenario_id=scenario.scenario_id,
+                model_pin_id=pin_id,
+            )
+            suite.outcomes.append(outcome)
+            write_json(
+                root / "outcomes" / f"{scenario.scenario_id}.json", outcome.model_dump(mode="json")
+            )
+        statuses = f"; {detail}" if detail else ""
+        typer.echo(f"{path.stem}: {decisive.status} (n={report.repetitions.completed}{statuses})")
+    return suite
+
+
+def _finish_suite(
+    root: Path, key: Ed25519PrivateKey, suite: SuiteRun, description: dict[str, object]
+) -> None:
+    """Write the suite's reports and inventory, then verify every bundle in it."""
+    reports(root, suite.summaries)
+    (root / "authorization-public.pem").write_bytes(
+        key.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+    )
+    write_json(root / "suite.json", description)
+    inventory(root, complete=True)
+    verify_bundle(root)

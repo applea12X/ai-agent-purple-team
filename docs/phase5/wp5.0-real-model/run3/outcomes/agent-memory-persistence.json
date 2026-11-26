@@ -1,0 +1,8 @@
+{
+  "detail": "repetitions: 0=inconclusive 1=inconclusive 2=inconclusive 3=inconclusive 4=inconclusive",
+  "model_pin_id": "networked",
+  "outcome": "fail",
+  "reason_code": "PAIRED_EVALUATION",
+  "scenario_id": "agent-memory-persistence",
+  "schema_version": "1.4.0"
+}

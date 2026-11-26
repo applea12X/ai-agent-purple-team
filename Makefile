@@ -94,3 +94,88 @@ release-check: holdout-check
 	uv run purpleloop verify-bundle "$$(ls -d artifacts/release-demo/*/ | tail -1)" --attestation
 	uv run purpleloop audit-export "$$(ls -d artifacts/release-demo/*/ | tail -1)" \
 		artifacts/release-audit.json
+
+# Phase 5 contracts lane (phase5.yml job `contracts`): lint, types, and the Phase 5 tests.
+# The whole-package coverage floor applies to the full suite (`make test`), not to this subset.
+.PHONY: phase5-check
+phase5-check: lint typecheck
+	uv run pytest tests/phase5 --no-cov
+	uv run purpleloop phase5-contracts
+
+# Phase 5 model plane (WP5.0). The commands read every knob from the environment themselves, so
+# make passes them through unchanged -- to agent-stochastic as well:
+#   PURPLELOOP_MODEL_{ID,VERSION,TEMPERATURE,TOP_P,SEED,MAX_OUTPUT_TOKENS,SEED_POLICY}
+#   PURPLELOOP_MODEL_{PRICE_INPUT,PRICE_OUTPUT}_MICROUSD_PER_1K, PURPLELOOP_MODEL_COST_BUDGET_MICROUSD
+#   PURPLELOOP_MODEL_{ENDPOINT,PROFILE,REPETITIONS,SUITE_COST_BUDGET_MICROUSD} (agent-corpus)
+#   PURPLELOOP_JUDGE_{ENDPOINT,PROFILE,MODEL_ID,MODEL_VERSION,TEMPERATURE,SEED,...} (judge)
+# A hosted (openai-compatible) profile refuses to run without a declared price.
+.PHONY: agent-corpus-stochastic judge-report-networked
+agent-corpus-stochastic:
+	uv run purpleloop agent-corpus --output-dir artifacts/agent-corpus
+
+judge-report-networked:
+	uv run purpleloop judge-report --output-dir artifacts/judge-networked \
+		--judge-endpoint "$$PURPLELOOP_JUDGE_ENDPOINT" \
+		--judge-profile "$${PURPLELOOP_JUDGE_PROFILE:-openai-compatible}"
+
+# Phase 5 evaluation matrix (WP5.2). The stand-in matrix is offline and deterministic; the
+# real-pin matrix needs local Ollama and is never run in CI (see docs/phase5/wp5.2-acceptance.md).
+.PHONY: matrix-standins matrix-real-dry-run
+matrix-standins:
+	uv run purpleloop matrix-run scenarios/matrix/standins-full.json --output-dir artifacts/matrix-standins
+
+matrix-real-dry-run:
+	uv run purpleloop matrix-run scenarios/matrix/real-pins-full.json --output-dir artifacts/matrix-real --dry-run || true
+	uv run purpleloop matrix-run scenarios/matrix/real-pins-subset.json --output-dir artifacts/matrix-real --dry-run
+
+# WP5.0.8 / WP5.4 review lane (phase5.yml job `review`).
+.PHONY: review-check
+review-check:
+	uv run pytest tests/phase5/test_review_adjudication.py tests/phase5/test_review_ui.py -s \
+		--cov-reset --cov=purpleloop.review --cov-branch --cov-report=term --cov-fail-under=85
+
+# WP5.6 benchmark subset (phase5.yml job `benchmark-subset`): check the committed subset against
+# its promotion records, then run it offline under both stand-ins, reported apart from the 48.
+.PHONY: benchmark-subset
+benchmark-subset:
+	uv run purpleloop benchmark-promote
+	uv run purpleloop benchmark-run --output-dir artifacts/benchmark
+
+# WP5.1 governance lane (phase5.yml job `governance`): shadow mode, capability delta, admission.
+.PHONY: governance-check shadow-run
+governance-check:
+	uv run pytest --no-cov tests/phase5/test_capability_delta.py \
+		tests/phase5/test_approval_admission.py tests/phase5/test_shadow_mode.py \
+		tests/phase5/test_model_driven_attacker.py tests/phase5/test_governance_cli.py \
+		tests/phase5/test_capability_baseline.py tests/phase5/test_risk_class_scenarios_removed.py
+	uv run purpleloop capability-baseline --check
+
+shadow-run:
+	uv run purpleloop shadow-run artifacts/shadow
+
+# WP5.3 observability (phase5.yml job `observability`). `observability-up` starts the optional
+# collector profile; nothing else here needs Docker.
+.PHONY: observability-check observability-up observability-down
+observability-check:
+	uv run purpleloop telemetry-namespace --check
+	uv run pytest tests/phase5/test_telemetry.py tests/phase5/test_telemetry_runs.py \
+		tests/phase5/test_analysis.py --no-cov
+
+observability-up:
+	mkdir -p artifacts/observability/collector
+	docker compose -f compose.observability.yaml --profile observability up -d
+
+observability-down:
+	docker compose -f compose.observability.yaml --profile observability down
+
+# WP5.5 codelab (phase5.yml job `codelab`). `codelab-check` is deterministic and offline (stub
+# sandbox); `codelab-container` runs the escape suite and the container lane and needs Docker.
+.PHONY: codelab-check codelab-container
+codelab-check:
+	uv run pytest --no-cov tests/phase5/test_codelab_lane.py tests/phase5/test_codelab_escape.py
+	uv run purpleloop codelab-run --output-dir artifacts/codelab
+	uv run purpleloop corpus-baseline --lane codelab --output artifacts/corpus-current-codelab.json
+
+codelab-container:
+	PURPLELOOP_CONTAINER_TESTS=1 uv run pytest --no-cov tests/phase5/test_codelab_container.py
+	uv run purpleloop codelab-escape --output-dir artifacts/codelab-escape

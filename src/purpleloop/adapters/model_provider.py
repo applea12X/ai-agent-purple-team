@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import re
 import socket
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -46,6 +47,40 @@ class ModelCredentialMissing(ModelUnavailable):
 
 class ModelResponseInvalid(RuntimeError):
     reason_code = "MODEL_RESPONSE_INVALID"
+
+
+#: A thinking model's reasoning, when it arrives inline at the head of the content. Only a leading
+#: block is recognised: a ``<think>`` tag later in a reply is content, and stripping it would let a
+#: model hide text from the parser by wrapping it.
+LEADING_THINKING = re.compile(r"\A\s*<think>(.*?)</think>\s*", re.DOTALL)
+UNTERMINATED_THINKING = re.compile(r"\A\s*<think>(.*)\Z", re.DOTALL)
+
+
+def split_thinking(text: str) -> tuple[str, str | None]:
+    """``(visible, thinking)``: a leading ``<think>...</think>`` block removed before parsing.
+
+    A reply without one is returned unchanged, byte for byte, with ``None`` -- the parse of every
+    non-thinking model is exactly what it was. An unterminated block (the model ran out of output
+    tokens while thinking) leaves nothing visible: the reasoning is not an answer, and parsing it
+    as one would turn half-formed deliberation into tool intents.
+    """
+    closed = LEADING_THINKING.match(text)
+    if closed is not None:
+        return text[closed.end() :], closed.group(1)
+    unterminated = UNTERMINATED_THINKING.match(text)
+    if unterminated is not None:
+        return "", unterminated.group(1)
+    return text, None
+
+
+def thinking_note(thinking: str, visible: str) -> dict[str, object]:
+    """What evidence records about stripped reasoning: its size and digest, never its text."""
+    return {
+        "stripped": True,
+        "chars": len(thinking),
+        "digest": digest_data(thinking),
+        "answer_remaining": bool(visible.strip()),
+    }
 
 
 @dataclass(frozen=True)

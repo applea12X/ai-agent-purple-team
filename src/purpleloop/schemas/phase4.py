@@ -351,9 +351,15 @@ RegressionStatus = Literal["covered", "uncovered", "retired"]
 class RegressionEntry(StrictModel):
     """One accepted finding class and the test that pins it.
 
-    ``test`` is a pytest node id (``path::function``). A ``covered`` entry must name one; an
-    ``uncovered`` or ``retired`` entry must say why instead, so the registry cannot drift into
-    decoration.
+    ``test`` is a pytest node id (``path::function``, or ``path::function[param]`` for one case
+    of a parametrized test). A ``covered`` entry must name one; an ``uncovered`` or ``retired``
+    entry must say why instead, so the registry cannot drift into decoration.
+
+    ``corpus_test`` (added in Phase 5, WP5.0.10; optional, so 1.4 registries still load) names
+    the coarser corpus-level test that also exercises the finding. Since WP5.0.10 ``test`` is a
+    per-scenario node id, so a failure names exactly one finding; the corpus test is kept
+    alongside it so a report from a lane that runs only the corpus tests is still judged, and
+    so a failing corpus test still blocks when its per-scenario twin passed.
     """
 
     finding_class: str
@@ -361,6 +367,11 @@ class RegressionEntry(StrictModel):
     test: str = Field(default="", max_length=300)
     status: RegressionStatus
     reason: str | None = Field(default=None, max_length=500)
+    corpus_test: str | None = Field(default=None, max_length=300)
+
+    def pinning_tests(self) -> tuple[str, ...]:
+        """Every node id that pins this finding, most specific first."""
+        return (self.test,) if self.corpus_test is None else (self.test, self.corpus_test)
 
     @field_validator("finding_class")
     @classmethod
@@ -371,6 +382,8 @@ class RegressionEntry(StrictModel):
     def validate_status(self) -> RegressionEntry:
         if self.status == "covered" and "::" not in self.test:
             raise ValueError("a covered finding must name its pinning test as a pytest node id")
+        if self.corpus_test is not None and "::" not in self.corpus_test:
+            raise ValueError("a corpus test must be a pytest node id")
         if self.status != "covered" and not self.reason:
             raise ValueError("an uncovered or retired finding must record why")
         return self

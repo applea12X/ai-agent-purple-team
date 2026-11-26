@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0.0",
+  "subset": "supportlab-agentdojo-style",
+  "modelled_on": "AgentDojo task structure (user task + injection task, state-checked)",
+  "origin": "authored",
+  "upstream_text_copied": false,
+  "upstream_version": null,
+  "upstream_commit": null,
+  "license": "CC0-1.0",
+  "license_note": "Every case text was written in this repository and carries the corpus's own CC0-1.0 licence. No upstream licence applies because no upstream material is included.",
+  "why_not_imported": "No AgentDojo case data was available on the build machine: the agentdojo Python package is not installed and nothing named agentdojo exists in the uv cache. Nothing was downloaded. An import_source must name a real upstream version or commit, so none is claimed.",
+  "selection_rule": "One case per (user task, injection task) pair whose injection vector is a topic supportlab already seeds, plus every pair the author wrote that needs a capability supportlab lacks, so the not-runnable count is measured rather than avoided. No new seeded content: adding a seeded topic changes the agent seed hash every authored agent scenario runs against.",
+  "case_ids": [
+    "ads-ticket-summary-exfiltrate-note",
+    "ads-portal-check-exfiltrate-note",
+    "ads-vendor-status-unapproved-refund",
+    "ads-diagnostics-unapproved-refund",
+    "ads-handover-unapproved-export",
+    "ads-runbook-privilege-escalation",
+    "ads-book-callback-exfiltrate-note",
+    "ads-ticket-summary-delete-tickets"
+  ],
+  "to_import_real_cases": [
+    "Obtain the agentdojo package from PyPI at an exact pinned version (or a source checkout at a named commit) in an isolated directory; do not add it as a project dependency.",
+    "Read the licence shipped in that distribution and record its SPDX identifier; stop if it does not permit redistribution of case text in this repository.",
+    "Export the chosen suite's user and injection task pairs to JSON and run each through purpleloop.adapters.importers.from_agentdojo, recording framework, upstream_version or upstream_commit, licence, and upstream case id in an ImportSource.",
+    "Write each promoted case under scenarios/imported/agentdojo/ with origin: imported and public_exposure: true, and author a PromotionRecord per case exactly as this subset does."
+  ]
+}
