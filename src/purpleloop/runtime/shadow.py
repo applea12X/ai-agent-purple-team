@@ -49,6 +49,7 @@ from purpleloop.control.attacker import (
 )
 from purpleloop.control.capabilities import OPERATION_ACTION_CLASSES
 from purpleloop.control.lanes import LaneContract
+from purpleloop.control.loop_guard import RUNAWAY_LOOP_WOULD_TRIP
 from purpleloop.control.manifest import ManifestError
 from purpleloop.control.plan_compiler import compile_plan, compile_step
 from purpleloop.reporting.bundle import UNINVENTORIED, inventory, write_json
@@ -368,8 +369,15 @@ class _ScenarioShadow:
             try:
                 compiled = compile_step(step, self.scenario, self.manifest, lane=self.lane)
             except ValueError as exc:
-                self.reject(
-                    proposal.operation, str(getattr(exc, "reason_code", exc)), proposal.depth
+                reason = str(getattr(exc, "reason_code", exc))
+                self.reject(proposal.operation, reason, proposal.depth)
+                # The loop detector sees the refusal too; in shadow it only ever reports.
+                self.runtime.refused_step(
+                    self.manifest,
+                    step,
+                    _reason_key(reason),
+                    run_id=self.run_id,
+                    trace_id=f"{self.runtime.stage}-{step.node_id}",
                 )
                 continue
             record = ProposalRecord(
@@ -575,11 +583,14 @@ def build_shadow_report(
     classes: set[ActionClass] = set()
     budget = dict.fromkeys(BudgetRequest.model_fields, 0)
     scenario_digests: list[str] = []
-    proposals_total = rejected = suppressed = unreachable = dispatches = 0
+    proposals_total = rejected = suppressed = unreachable = dispatches = loops = 0
     for events in ledgers.values():
         for event in events:
             data = event.data
             reason = event.reason_code or ""
+            if event.kind == EventKind.POLICY and reason == RUNAWAY_LOOP_WOULD_TRIP:
+                loops += 1
+                continue
             if event.kind == EventKind.SHADOW_SUPPRESSED:
                 suppressed += 1
                 operations[str(data["operation"])] += 1
@@ -634,6 +645,8 @@ def build_shadow_report(
             "unreachable_steps": unreachable,
             "adapter_calls": dispatches,
             "created_at": created_at,
+            # Absent rather than zero, so a report with no would-be loop keeps its digest.
+            "would_be_loops": loops or None,
         }
     )
 
