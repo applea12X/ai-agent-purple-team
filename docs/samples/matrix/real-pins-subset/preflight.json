@@ -1,0 +1,73 @@
+{
+  "cost_cap_microusd": 0,
+  "cost_microusd": 0,
+  "created_at": "2026-11-26T09:49:42.991109Z",
+  "decision": "accepted",
+  "detail": [],
+  "harness_seconds_per_trial": 1.5,
+  "matrix_digest": "22501fc9357ae29adfb7707f7536aa36e491cdd1201e792a0c44e6e92ba47d5a",
+  "matrix_id": "real-pins-subset",
+  "reasons": [],
+  "repetitions": 5,
+  "rows": [
+    {
+      "cost_microusd": 0,
+      "kind": "deterministic-anchor",
+      "model_calls": 360,
+      "row_id": "scripted-compliant",
+      "seconds_per_call": null,
+      "tokens": 654120,
+      "tokens_are_a_bound": true,
+      "trials": 60,
+      "wall_seconds": 90.0
+    },
+    {
+      "cost_microusd": 0,
+      "kind": "deterministic-anchor",
+      "model_calls": 360,
+      "row_id": "delimitation-blind",
+      "seconds_per_call": null,
+      "tokens": 654120,
+      "tokens_are_a_bound": true,
+      "trials": 60,
+      "wall_seconds": 90.0
+    },
+    {
+      "cost_microusd": 0,
+      "kind": "deterministic-anchor",
+      "model_calls": 360,
+      "row_id": "hostile",
+      "seconds_per_call": null,
+      "tokens": 654120,
+      "tokens_are_a_bound": true,
+      "trials": 60,
+      "wall_seconds": 90.0
+    },
+    {
+      "cost_microusd": 0,
+      "kind": "real-pin",
+      "model_calls": 360,
+      "row_id": "qwen2-5-7b-instruct",
+      "seconds_per_call": 4.4,
+      "tokens": 654120,
+      "tokens_are_a_bound": true,
+      "trials": 60,
+      "wall_seconds": 1674.0
+    },
+    {
+      "cost_microusd": 0,
+      "kind": "real-pin",
+      "model_calls": 360,
+      "row_id": "deepseek-r1-latest",
+      "seconds_per_call": 30.0,
+      "tokens": 1207080,
+      "tokens_are_a_bound": true,
+      "trials": 60,
+      "wall_seconds": 10890.0
+    }
+  ],
+  "scenarios": 12,
+  "trials": 300,
+  "wall_seconds": 12834.0,
+  "wall_time_cap_seconds": 14400
+}
