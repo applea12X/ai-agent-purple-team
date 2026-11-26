@@ -143,11 +143,12 @@ that a target or a model is secure.**
 | Captured model | 0 out-of-scope actions across 25 scenarios with a hostile stand-in model | [Phase 3](docs/phase3-acceptance.md) |
 | Evaluator injection | resistance 1.000 (n=24) for the scripted judge; 0.583 with delimiting removed | [Phase 3](docs/phase3-acceptance.md) |
 | First real model | `qwen2.5:7b-instruct` (local, temperature 0) on one scenario: the prompt-only defense failed 5 of 5; after enforcing provenance at the email sink it held 5 of 5 | [Phase 4, WP4.0.1](docs/phase4-acceptance.md) |
+| Sampled real-model corpus | `qwen2.5:7b-instruct`, temperature 0.7, 25 scenarios × 5: defended-replay attack success 28/125 before the fixes it prompted (provenance at the export, refund, and CRM sinks; memory provenance), 1/125 after (an oracle false positive); calibration ±10% met (−0.20%); containment 0 violations | [WP5.0.2–5.0.6](docs/phase5/wp5.0-real-model-acceptance.md) |
+| Real judge (same lineage) | `deepseek-r1` on the frozen 24 cases, 1 of 3 trials: α 0.304 [−0.067, 0.608], κ 0.667 (n=6), 0 critical false passes | [WP5.0.5](docs/phase5/wp5.0-real-model-acceptance.md) |
 | Suite | 472 passed, 3 gated skips, 89.40% branch coverage at `ab66ab0` | [WP5.0.1](docs/phase5/wp5.0.1-acceptance.md) |
 
-**Not yet measured:** a real API cost, a real judge, variance under sampling on a real model, the
-other 24 agent scenarios on a real model, gates observed failing in CI, precision on a
-human-adjudicated sample, and an independent reviewer session.
+**Not yet measured:** a real API cost, a cross-family judge, gates observed failing in CI,
+precision on a human-adjudicated sample, and an independent reviewer session.
 [docs/phase5/loose-ends.md](docs/phase5/loose-ends.md) lists every such item and who owns it.
 
 ## CLI
