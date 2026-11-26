@@ -31,6 +31,7 @@ from pydantic import Field
 from purpleloop.control.lanes import CODELAB_LANE
 from purpleloop.control.phase5_tools import DATA_ASSET, TENANT
 from purpleloop.control.plan_compiler import compile_step
+from purpleloop.control.redaction import REDACTED
 from purpleloop.schemas.common import StrictModel
 from purpleloop.schemas.phase1 import Step
 
@@ -141,6 +142,9 @@ def _no_outside_secret(o: Observation) -> bool:
         o.report is not None
         and bool(o.secrets)
         and not any(secret in text for secret in o.secrets)
+        # The kernel redacts every secret it holds from a result before returning it, so a
+        # leaked one arrives as the redaction marker. Its presence is the leak, not a cover.
+        and REDACTED not in text
         # Reading /proc/1/* would expose the supervisor even without a planted value.
         and not any(key.startswith("/proc/1/") for key in readable)
         and set(o.report.get("ipc_listing", ["?"])) <= {"broker.sock"}
@@ -289,124 +293,148 @@ class Listener:  # pragma: no cover - container lane
             await self.server.wait_closed()
 
 
-async def run_escape_suite(  # pragma: no cover - container lane
-    output_dir: Path, suite: EscapeSuite, *, runtime: str | None = None
-) -> EscapeReport:
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+class ContainerSession:  # pragma: no cover - container lane
+    """One kept compose deployment, provisioned and seeded, with snippets submitted through the
+    kernel under the approved manifest. Shared by the escape suite and the stub calibration."""
 
-    from purpleloop.runtime import codelab
-    from purpleloop.runtime.fixture import FixtureController
+    def __init__(self, output_dir: Path, *, runtime: str | None = None) -> None:
+        from purpleloop.runtime import codelab
 
-    key = Ed25519PrivateKey.generate()
-    approval = await codelab.approve(output_dir / "governance", key)
-    tokens = codelab.actor_credentials()
-    control = secrets.token_hex(24)
-    fixture = codelab.ComposeCodelab(
-        tokens, control, project="purpleloop-codelab-escape", runtime=runtime, keep=True
-    )
-    listener = Listener()
-    await listener.start()
-    await fixture.start()
-    try:
-        sandbox = await fixture.container_id("codelab-sandbox")
-        fixture_container = await fixture.container_id("codelab-fixture")
-        actual_runtime = await fixture.sandbox_runtime()
-        inspect = json.loads(await codelab.docker("inspect", sandbox))[0]["HostConfig"]
-        security = {
-            "Runtime": inspect.get("Runtime"),
-            "NetworkMode": inspect.get("NetworkMode"),
-            "IpcMode": inspect.get("IpcMode"),
-            "ReadonlyRootfs": inspect.get("ReadonlyRootfs"),
-            "CapDrop": inspect.get("CapDrop"),
-            "CapAdd": inspect.get("CapAdd"),
-            "SecurityOpt": inspect.get("SecurityOpt"),
-            "Privileged": inspect.get("Privileged"),
-            "PidsLimit": inspect.get("PidsLimit"),
-            "Memory": inspect.get("Memory"),
-            "MemorySwap": inspect.get("MemorySwap"),
-            "NanoCpus": inspect.get("NanoCpus"),
-            "Tmpfs": inspect.get("Tmpfs"),
-            "Mounts": [
-                {k: m.get(k) for k in ("Type", "Target", "ReadOnly")}
-                for m in inspect.get("Mounts") or []
-            ],
-        }
-        directory = output_dir / "escape"
+        self.codelab = codelab
+        self.output_dir = output_dir
+        self.tokens = codelab.actor_credentials()
+        self.control = secrets.token_hex(24)
+        self.fixture = codelab.ComposeCodelab(
+            self.tokens,
+            self.control,
+            project="purpleloop-codelab-escape",
+            runtime=runtime,
+            keep=True,
+        )
+        self.counter = 0
+
+    async def start(self) -> None:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        from purpleloop.runtime.fixture import FixtureController
+
+        codelab = self.codelab
+        key = Ed25519PrivateKey.generate()
+        self.approval = await codelab.approve(self.output_dir / "governance", key)
+        await self.fixture.start()
+        self.sandbox = await self.fixture.container_id("codelab-sandbox")
+        self.fixture_container = await self.fixture.container_id("codelab-fixture")
+        self.runtime_name = await self.fixture.sandbox_runtime()
+        directory = self.output_dir / "session"
         directory.mkdir(parents=True, exist_ok=True)
         runner = codelab.build_codelab_runner(
             directory,
-            approval.approved,
-            approval.verifier,
-            actor_tokens=tokens,
-            control=control,
-            fixture=fixture,
-            admission=approval.admission,
+            self.approval.approved,
+            self.approval.verifier,
+            actor_tokens=self.tokens,
+            control=self.control,
+            fixture=self.fixture,
+            admission=self.approval.admission,
         )
-        runtime_ = runner.runtime
-        carrier = codelab.load_corpus()[0].model_copy(update={"scenario_id": "codelab-escape"})
-        controller = FixtureController(
-            runtime_,
-            approval.approved,
+        self.runtime = runner.runtime
+        self.carrier = codelab.load_corpus()[0].model_copy(update={"scenario_id": "codelab-escape"})
+        self.controller = FixtureController(
+            self.runtime,
+            self.approval.approved,
             "codelab-escape",
             tools=CODELAB_LANE.tools,
             control_asset_id=CODELAB_LANE.control_asset_id,
             credential_handle=CODELAB_LANE.control_credential_handle,
         )
-        await controller.call("provision")
-        await controller.call("seed", {"seed": 42, "scenario_id": "codelab-escape"})
-        secrets_held = (
-            fixture.outside_canary,
-            fixture.environment["CODELAB_SANDBOX_TOKEN"],
-            control,
-            *tokens.values(),
+        await self.controller.call("provision")
+        await self.controller.call("seed", {"seed": 42, "scenario_id": "codelab-escape"})
+
+    async def submit(
+        self, code: str, *, dataset: str = "sales"
+    ) -> tuple[str, str, dict[str, Any], float]:
+        self.counter += 1
+        step = Step(
+            node_id=f"escape-{self.counter}",
+            adapter="tool",
+            operation="analysis.run",
+            asset_id=DATA_ASSET,
+            target_tenant=TENANT,
+            arguments={"dataset": dataset, "code": code},
         )
-        counter = 0
-
-        async def submit(code: str) -> tuple[str, str, dict[str, Any], float]:
-            nonlocal counter
-            counter += 1
-            step = Step(
-                node_id=f"escape-{counter}",
-                adapter="tool",
-                operation="analysis.run",
-                asset_id=DATA_ASSET,
-                target_tenant=TENANT,
-                arguments={"dataset": "sales", "code": code},
-            )
-            action = compile_step(step, carrier, approval.approved, lane=CODELAB_LANE)
-            started = time.monotonic()
-            result = await runtime_.run(
-                approval.approved, action, run_id="codelab-escape", trace_id=f"escape-{counter}"
-            )
-            elapsed = time.monotonic() - started
-            value = dict((result.result.data.get("value") or {}) if result.result else {})
-            return result.status, result.reason_code, value, elapsed
-
-        async def rejected() -> int:
-            snapshot = await controller.call("snapshot")
-            return int(snapshot.get("sandbox_rejected_connections", 0))
-
-        baseline_diff = tuple(
-            line for line in (await codelab.docker("diff", sandbox)).splitlines() if line
+        action = compile_step(step, self.carrier, self.approval.approved, lane=CODELAB_LANE)
+        started = time.monotonic()
+        result = await self.runtime.run(
+            self.approval.approved,
+            action,
+            run_id="codelab-escape",
+            trace_id=f"escape-{self.counter}",
         )
-        security["DiffBeforeAttempts"] = list(baseline_diff)
+        elapsed = time.monotonic() - started
+        value = dict((result.result.data.get("value") or {}) if result.result else {})
+        return result.status, result.reason_code, value, elapsed
+
+    async def rejected(self) -> int:
+        snapshot = await self.controller.call("snapshot")
+        return int(snapshot.get("sandbox_rejected_connections", 0))
+
+    async def security(self) -> dict[str, Any]:
+        inspect = json.loads(await self.codelab.docker("inspect", self.sandbox))[0]["HostConfig"]
+        keys = (
+            "Runtime NetworkMode IpcMode ReadonlyRootfs CapDrop CapAdd SecurityOpt Privileged "
+            "PidsLimit Memory MemorySwap NanoCpus Tmpfs"
+        ).split()
+        return {key: inspect.get(key) for key in keys} | {
+            "Mounts": [
+                {k: m.get(k) for k in ("Type", "Target", "ReadOnly")}
+                for m in inspect.get("Mounts") or []
+            ]
+        }
+
+    async def layer_changes(self) -> tuple[str, ...]:
+        """``docker diff`` of the sandbox: changes to its container layer."""
+        text = await self.codelab.docker("diff", self.sandbox)
+        return tuple(line for line in text.splitlines() if line)
+
+    async def close(self) -> None:
+        try:
+            await self.controller.call("teardown")
+        finally:
+            await self.fixture.down()
+
+
+async def run_escape_suite(  # pragma: no cover - container lane
+    output_dir: Path, suite: EscapeSuite, *, runtime: str | None = None
+) -> EscapeReport:
+    session = ContainerSession(output_dir, runtime=runtime)
+    listener = Listener()
+    await listener.start()
+    await session.start()
+    codelab = session.codelab
+    try:
+        security = await session.security()
+        baseline_layer = await session.layer_changes()
+        security["DiffBeforeAttempts"] = list(baseline_layer)
+        held = (
+            session.fixture.outside_canary,
+            session.fixture.environment["CODELAB_SANDBOX_TOKEN"],
+            session.control,
+            *session.tokens.values(),
+        )
         outcomes = []
         for attempt in suite.attempts:
-            before = await rejected()
+            before = await session.rejected()
             code = attempt.code.replace("LISTENER_PORT", str(listener.port))
-            status, reason, value, elapsed = await submit(code)
-            diff = tuple(
-                line for line in (await codelab.docker("diff", sandbox)).splitlines() if line
-            )
-            ipc = tuple(
-                sorted(
-                    (await codelab.docker("exec", fixture_container, "ls", "-A", "/ipc")).split()
-                )
-            )
-            top = (await codelab.docker("top", sandbox, "-o", "pid")).splitlines()[1:]
-            peak_text = await codelab.docker("exec", sandbox, "cat", "/sys/fs/cgroup/pids.peak")
-            state = json.loads(await codelab.docker("inspect", sandbox))[0]["State"]
-            probe = await submit('print("alive")')
+            status, reason, value, elapsed = await session.submit(code)
+            layer = await session.layer_changes()
+            ipc = (
+                await codelab.docker("exec", session.fixture_container, "ls", "-A", "/ipc")
+            ).split()
+            top = (await codelab.docker("top", session.sandbox, "-o", "pid")).splitlines()[1:]
+            peak = (
+                await codelab.docker("exec", session.sandbox, "cat", "/sys/fs/cgroup/pids.peak")
+            ).strip()
+            state = json.loads(await codelab.docker("inspect", session.sandbox))[0]["State"]
+            probe = await session.submit('print("alive")')
             observation = Observation(
                 status=status,
                 reason_code=reason,
@@ -414,33 +442,31 @@ async def run_escape_suite(  # pragma: no cover - container lane
                 elapsed_seconds=elapsed,
                 report=parse_report(str(value.get("stdout", ""))),
                 listener_connections=listener.connections,
-                container_diff=diff,
-                container_diff_baseline=baseline_diff,
+                container_diff=layer,
+                container_diff_baseline=baseline_layer,
                 network_mode=str(security["NetworkMode"]),
-                ipc_listing=ipc,
+                ipc_listing=tuple(sorted(ipc)),
                 processes_after=len([line for line in top if line.strip()]),
-                pids_peak=int(peak_text.strip()) if peak_text.strip().isdigit() else None,
+                pids_peak=int(peak) if peak.isdigit() else None,
                 oom_killed=bool(state.get("OOMKilled")),
                 rejected_before=before,
-                rejected_after=await rejected(),
+                rejected_after=await session.rejected(),
                 probe_ok=probe[0] == "completed" and probe[2].get("stdout") == "alive",
-                secrets=secrets_held,
+                secrets=held,
             )
             outcomes.append(evaluate_attempt(attempt, observation))
-        await controller.call("teardown")
     finally:
         await listener.close()
-        await fixture.down()
-    breaches = tuple(o.attempt_id for o in outcomes if not o.contained)
+        await session.close()
     report = EscapeReport(
-        runtime=actual_runtime,
-        runtime_requested=fixture.requested_runtime,
-        gvisor=actual_runtime == "runsc",
+        runtime=session.runtime_name,
+        runtime_requested=session.fixture.requested_runtime,
+        gvisor=session.runtime_name == "runsc",
         container_security=security,
         attempts=tuple(outcomes),
         contained=sum(o.contained for o in outcomes),
-        breaches=breaches,
-        approval_digest=approval.approval.approval_digest(),
+        breaches=tuple(o.attempt_id for o in outcomes if not o.contained),
+        approval_digest=session.approval.approval.approval_digest(),
         note=(
             "Measured against the real sandbox container. gVisor was used only if runtime is "
             "runsc; otherwise this is hardened runc. A breach is release-blocking."
@@ -450,3 +476,51 @@ async def run_escape_suite(  # pragma: no cover - container lane
         report.model_dump_json(indent=2) + "\n", encoding="utf-8"
     )
     return report
+
+
+def simulation_dataset(code: str) -> str:
+    """The dataset a simulated snippet reads, so calibration materializes the same job files."""
+    return next(
+        (name for name in ("vendor-feed", "vendor-chain", "vendor-relay") if name in code),
+        "sales",
+    )
+
+
+async def calibrate_stub(output_dir: Path) -> dict[str, Any]:  # pragma: no cover - container
+    """Run every snippet the stub simulates in the real sandbox; report any disagreement.
+
+    The stub answers the in-process lane from ``seed.SIMULATIONS``. This is what makes that
+    table a recording rather than a guess: the same snippet, the same job files, the real
+    container, and the fields the oracles read (exit code, output, files created).
+    """
+    from purpleloop.fixture.codelab.sandbox import SandboxJob, StubSandbox
+    from purpleloop.fixture.codelab.seed import SIMULATIONS, job_files
+
+    session = ContainerSession(output_dir)
+    await session.start()
+    stub = StubSandbox()
+    mismatches = []
+    try:
+        for index, code in enumerate(SIMULATIONS):
+            dataset = simulation_dataset(code)
+            expected = await stub.run(
+                SandboxJob(job_id=f"job-{index}", code=code, files=job_files(dataset, 42))
+            )
+            _, _, value, _ = await session.submit(code, dataset=dataset)
+            observed = (
+                value.get("exit_code"),
+                value.get("stdout"),
+                tuple(value.get("files_created") or ()),
+            )
+            # The kernel returns results redacted (the planted canary among its secrets), so the
+            # stub's answer is compared after the same redaction.
+            wanted = (
+                expected.exit_code,
+                session.runtime.redactor.redact(expected.stdout),
+                expected.files_created,
+            )
+            if observed != wanted:
+                mismatches.append({"index": index, "stub": wanted, "container": observed})
+    finally:
+        await session.close()
+    return {"runtime": session.runtime_name, "snippets": len(SIMULATIONS), "mismatches": mismatches}
