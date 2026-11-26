@@ -20,6 +20,7 @@ from purpleloop.control.loop_guard import (
     LoopTrip,
     action_fingerprint,
     outcome_digest,
+    rejected_fingerprint,
     step_fingerprint,
 )
 from purpleloop.control.manifest import ManifestError, ManifestVerifier
@@ -541,17 +542,19 @@ class SafetyRuntime:
     def refused_step(
         self,
         manifest: AuthorizationManifest,
-        step: Step,
+        step: Step | str,
         reason: str,
         *,
         run_id: str,
         trace_id: str,
     ) -> bool:
-        """Count a model- or attacker-originated step the plan compiler refused.
+        """Count a model- or attacker-originated attempt that never became an action.
 
-        A refusal at compile time is still an action boundary: a model that asks for the same
-        forbidden tool call turn after turn is the commonest runaway loop, and it never reaches
-        :meth:`run`. True when the detector has latched and the run must end.
+        ``step`` is a typed step the plan compiler refused, or the name of a tool intent the
+        agent adapter rejected before it was typed at all. Either is still an action boundary: a
+        model that asks for the same forbidden tool call turn after turn is the commonest
+        runaway loop, and it never reaches :meth:`run`. True when the detector has latched and
+        the run must end.
         """
         guard = self.loop_guard(manifest)
         if not guard.armed:
@@ -559,7 +562,10 @@ class SafetyRuntime:
         shadow = self.is_shadow(manifest)
         if guard.tripped is not None and not shadow:
             return True
-        trip = guard.boundary(step_fingerprint(step), self.stage)
+        fingerprint = (
+            step_fingerprint(step) if isinstance(step, Step) else rejected_fingerprint(step)
+        )
+        trip = guard.boundary(fingerprint, self.stage)
         if trip is None and not shadow:
             trip = guard.observe(None)
         if trip is None:
@@ -569,9 +575,9 @@ class SafetyRuntime:
             run_id,
             trace_id,
             manifest.manifest_digest(),
-            step.digest(),
+            step.digest() if isinstance(step, Step) else fingerprint,
             shadow=shadow,
-            extra={"refused_step": reason[:64]},
+            extra={"refused": reason[:64]},
         )
         if shadow:
             return False

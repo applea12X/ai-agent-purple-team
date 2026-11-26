@@ -166,14 +166,15 @@ class PurpleTeamRunner:
             raise ActionFailed(RUNAWAY_LOOP_DETECTED)
         return result
 
-    def refused(self, step: Step, reason: str) -> None:
-        """Count a refused model or attacker step at the kernel's loop detector."""
+    def refused(self, step: Step | str, reason: str) -> None:
+        """Count a refused model or attacker attempt at the kernel's loop detector."""
+        node = step.node_id if isinstance(step, Step) else "rejected-intent"
         if self.runtime.refused_step(
             self.manifest,
             step,
             reason,
             run_id=self.run_id,
-            trace_id=f"{self.runtime.stage}-{step.node_id}",
+            trace_id=f"{self.runtime.stage}-{node}",
         ):
             raise ActionFailed(RUNAWAY_LOOP_DETECTED)
 
@@ -284,6 +285,7 @@ class PurpleTeamRunner:
                             "TOOL_INTENT_REJECTED",
                             {"operation": str(refused)[:64]},
                         )
+                        self.refused(str(refused)[:64], "TOOL_INTENT_REJECTED")
                     self.record(
                         EventKind.MODEL,
                         "MODEL_CALLED",
@@ -328,7 +330,7 @@ class PurpleTeamRunner:
                             "TOOL_INTENT_REFUSED",
                             {"operation": step.operation, "reason": str(exc)[:200]},
                         )
-                        self.refused(step, str(getattr(exc, "reason_code", "INTENT_REFUSED")))
+                        self.refused(step, str(getattr(exc, "reason_code", exc))[:64])
                         continue
                     self.record(
                         EventKind.LIFECYCLE,
@@ -551,6 +553,8 @@ class PurpleTeamRunner:
                 "TOOL_INTENT_REJECTED",
                 {"reason": str(exc)[:200]},
             )
+            named = raw.get("operation") if isinstance(raw, dict) else None
+            self.refused(str(named)[:64] if named else "<malformed>", "TOOL_INTENT_REJECTED")
             return None
         return Step(
             node_id=node,

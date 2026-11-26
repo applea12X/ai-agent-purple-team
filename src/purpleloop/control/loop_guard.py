@@ -12,7 +12,8 @@ adapter, operation, method, target, side-effect class, credential handle, and th
 arguments -- with every per-run identity removed (``action_id``, ``idempotency_key``) and the
 budget left out, since nothing the target sees depends on it. A model that re-asks for the same
 tool call under a fresh node id therefore has the same fingerprint every time. A step refused at
-compile time, before it became an action, is fingerprinted from its typed fields the same way.
+compile time, before it became an action, is fingerprinted from its typed fields the same way;
+one rejected before it was even typed, by the operation name it gave.
 
 **What "state" is.** The kernel cannot see the target's database, and the fixture's own state
 hash exists only at the leg boundaries where the runner snapshots it, so neither can say whether
@@ -95,6 +96,11 @@ def step_fingerprint(step: Step) -> str:
             "arguments": step.arguments,
         }
     )
+
+
+def rejected_fingerprint(name: str) -> str:
+    """The digest of a tool intent rejected before it was typed, by the name it was given."""
+    return digest_data({"kind": "rejected-intent", "name": name})
 
 
 def outcome_digest(
