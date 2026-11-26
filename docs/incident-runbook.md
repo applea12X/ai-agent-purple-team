@@ -130,3 +130,37 @@ lane the same outcome appears in `artifacts/nightly/nightly.json` and in the tra
    signed model asset), not an environment-variable edit.
 4. Repeated endpoint errors across nights with a healthy provider mean the pin or profile is
    wrong; re-run `make agent-stochastic` locally with the same pin to reproduce.
+
+## 6. Runaway loop detected
+
+**What it looks like.** `summary.json` has `status: error`, `reason: RUNAWAY_LOOP_DETECTED`. The
+run's ledger holds a `POLICY` event, decision `deny`, reason `RUNAWAY_LOOP_DETECTED`, whose
+`data` names the `check` (`repetition` or `no-progress`), the `limit` and `observed` count, the
+`window_stage`, the `action_fingerprint`, the `state_digest` and the `action_state_hash`. A refused
+or rejected step also carries `refused`. The final `TERMINATION` event has the same reason and
+`teardown_complete: true`. In a shadow bundle the same detection is `RUNAWAY_LOOP_WOULD_TRIP`
+(decision `would-deny`), counted in `shadow-report.json` `would_be_loops`, and stops nothing.
+
+This is **correct behaviour**, the kernel's loop guard (ADR 0018) ending a run fail-closed, like
+a budget outcome. The incident forms are: a target-plane `RESULT` `COMPLETED` *after* the
+detection event in the same ledger (the latch failed: treat as class 2, out of scope), or
+`teardown_complete: false` (treat as class 4, containment).
+
+**Response.**
+1. Preserve the bundle. A stopped run is still sealed and verifies like any other:
+   `purpleloop verify-bundle <bundle>` and `purpleloop verify-ledger
+   <bundle>/<run>/evidence.jsonl`.
+2. `purpleloop audit-export <bundle> out.json`: the run's decision record lists the `policy` and
+   `termination` entries with reason `RUNAWAY_LOOP_DETECTED` and their sequence numbers.
+3. Find what looped: `purpleloop locate-action <bundle>/<run> <action_digest>` on the detection
+   event's `action_digest`. Its `origins` name the source, e.g. "model intent compiled at
+   sequence N" or a plan node. For a refused or rejected attempt the digest is the refused
+   step's own digest (or the rejected name's fingerprint), so read the `TOOL_INTENT_REFUSED`,
+   `TOOL_INTENT_REJECTED` or `PROPOSAL` events just before the detection instead.
+4. Decide which it is. A model or attacker that loops is a **finding about that model** (record
+   it, do not loosen the limits to make the run pass). A legitimate scenario that trips means
+   the signed limits are too tight for it. Measure with `uv run python
+   scripts/loop_guard_margins.py --repeat-limit N --no-progress-limit K` and re-sign the
+   manifest (or matrix spec) with new limits. Never patch the kernel.
+5. A latch failure (step "incident forms" above) reproduces from the same seed. Fix it with a
+   case in `tests/phase5/test_runaway_loop.py`.

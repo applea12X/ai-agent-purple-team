@@ -39,6 +39,7 @@ from purpleloop.schemas.phase3 import DecodingParameters, ModelPin
 from purpleloop.schemas.phase4 import Phase4Grants, RetentionRule
 from purpleloop.schemas.phase5 import (
     ActionClass,
+    LoopGuardGrant,
     Phase5Grants,
     ProposalSource,
     RiskApproval,
@@ -162,6 +163,7 @@ def agent_manifest_15(
     action_classes: Iterable[ActionClass] = (ActionClass.READ, ActionClass.WRITE),
     proposal_source: ProposalSource | None = None,
     risk_approvals: Iterable[str] = (),
+    loop_guard: LoopGuardGrant | None = None,
     attestation_key_ids: Iterable[str] = (ATTESTATION_KEY_ID,),
     overrides: Mapping[str, Any] | None = None,
     phase3_overrides: Mapping[str, Any] | None = None,
@@ -169,7 +171,8 @@ def agent_manifest_15(
     """The agent-lane manifest at 1.5: the 1.3 grants plus Phase 4 and Phase 5 grants, signed.
 
     With every default, its capability delta against the v1 baseline is empty -- the same
-    surface, now carried by a manifest that can say ``shadow`` and name approvals. A
+    surface, now carried by a manifest that can say ``shadow`` and name approvals. ``loop_guard``
+    arms the kernel's runaway-loop detector (ADR 0018); it changes no capability. A
     ``model-driven`` proposal source also signs :data:`ATTACKER_PIN`. ``overrides`` and
     ``phase3_overrides`` replace top-level and Phase 3 fields before validation; they are how a
     test or a work package widens one axis at a time.
@@ -197,6 +200,7 @@ def agent_manifest_15(
             run_mode=run_mode,
             proposal_source=proposal_source,
             risk_approvals=frozenset(risk_approvals),
+            loop_guard=loop_guard,
         ),
     )
     data.update(overrides or {})

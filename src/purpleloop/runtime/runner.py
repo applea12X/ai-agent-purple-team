@@ -14,6 +14,7 @@ from purpleloop.control.attacker import (
 )
 from purpleloop.control.kill_switch import KernelState
 from purpleloop.control.lanes import PHASE1_LANE, LaneContract
+from purpleloop.control.loop_guard import RUNAWAY_LOOP_DETECTED
 from purpleloop.control.phase1_tools import ChatArgs, ToolIntent
 from purpleloop.control.phase3_tools import INTENT_ADAPTERS, AgentToolIntent
 from purpleloop.control.plan_compiler import compile_plan, compile_step
@@ -57,7 +58,9 @@ ORACLE_HASH_EXCLUDE: dict[str, Any] = {
 #: meets one of these stops the run exactly as a planned action would: the budget is spent or the
 #: kernel was stopped, and recording it as one more piece of evidence would keep a leg going that
 #: the kernel has already ended.
-RUN_STOP_REASONS = frozenset({"BUDGET_EXCEEDED", "KERNEL_STOPPED", "WALL_TIME_EXCEEDED"})
+RUN_STOP_REASONS = frozenset(
+    {"BUDGET_EXCEEDED", "KERNEL_STOPPED", "WALL_TIME_EXCEEDED", RUNAWAY_LOOP_DETECTED}
+)
 
 
 class ActionFailed(RuntimeError):
@@ -157,7 +160,23 @@ class PurpleTeamRunner:
         )
         if result.status == "cancelled":
             raise asyncio.CancelledError
+        if self.runtime.loop_tripped:
+            # The kernel's loop detector latched on this action (ADR 0018). Whatever source
+            # asked for it -- plan, model intent, or attacker -- the run ends here, fail closed.
+            raise ActionFailed(RUNAWAY_LOOP_DETECTED)
         return result
+
+    def refused(self, step: Step | str, reason: str) -> None:
+        """Count a refused model or attacker attempt at the kernel's loop detector."""
+        node = step.node_id if isinstance(step, Step) else "rejected-intent"
+        if self.runtime.refused_step(
+            self.manifest,
+            step,
+            reason,
+            run_id=self.run_id,
+            trace_id=f"{self.runtime.stage}-{node}",
+        ):
+            raise ActionFailed(RUNAWAY_LOOP_DETECTED)
 
     async def action(self, action: ActionRequest) -> tuple[dict[str, Any], tuple[str, ...]]:
         """Run a planned action. Anything short of completion fails the run closed."""
@@ -266,6 +285,7 @@ class PurpleTeamRunner:
                             "TOOL_INTENT_REJECTED",
                             {"operation": str(refused)[:64]},
                         )
+                        self.refused(str(refused)[:64], "TOOL_INTENT_REJECTED")
                     self.record(
                         EventKind.MODEL,
                         "MODEL_CALLED",
@@ -310,6 +330,7 @@ class PurpleTeamRunner:
                             "TOOL_INTENT_REFUSED",
                             {"operation": step.operation, "reason": str(exc)[:200]},
                         )
+                        self.refused(step, str(getattr(exc, "reason_code", exc))[:64])
                         continue
                     self.record(
                         EventKind.LIFECYCLE,
@@ -431,6 +452,7 @@ class PurpleTeamRunner:
             self.proposals.append(record)
             self.record(EventKind.PROPOSAL, reason, record.model_dump(mode="json"))
             if compiled is None:
+                self.refused(step, reason)
                 continue
             try:
                 self.check_leg_budget(start_budget, compiled.budget, "attack")
@@ -536,6 +558,8 @@ class PurpleTeamRunner:
                 "TOOL_INTENT_REJECTED",
                 {"reason": str(exc)[:200]},
             )
+            named = raw.get("operation") if isinstance(raw, dict) else None
+            self.refused(str(named)[:64] if named else "<malformed>", "TOOL_INTENT_REJECTED")
             return None
         return Step(
             node_id=node,

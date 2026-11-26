@@ -137,6 +137,9 @@ FIELD_CLASSIFICATION: Mapping[str, Mapping[str, Classification]] = MappingProxyT
                 "matrix_scope": "not-capability",
                 "telemetry": "projected",
                 "proposal_source": "projected",
+                # A stop rule (ADR 0018): it can only end a run sooner. Without it the run has
+                # exactly the v1 structural bounds the baseline approved.
+                "loop_guard": "not-capability",
             }
         ),
     }

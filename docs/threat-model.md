@@ -124,3 +124,13 @@ actor and per most recent run, not full information flow. Retrieval is lexical
 ([ADR 0011](adr/0011-deterministic-retrieval-without-embeddings.md)). There is no
 code-execution surface, so unexpected code execution is covered only as a containment property.
 The only release attestation so far used an ephemeral key.
+
+## Phase 5 additions: runaway loops
+
+| Threat | Phase 5 control |
+| --- | --- |
+| A captured or confused model, or a model-driven attacker, spends its caps and budget repeating the same action | Kernel-side action-state hashing at every action boundary, compile-time refusals included. The N-th repetition is refused before dispatch, and K consecutive no-progress actions end the run `RUNAWAY_LOOP_DETECTED`. The guard latches, so the kernel refuses everything after a trip, and teardown still runs. Armed only by signed thresholds (`phase5.loop_guard`, `EvaluationMatrix.loop_guard`) ([ADR 0018](adr/0018-runaway-loop-detection.md), `tests/phase5/test_runaway_loop.py`) |
+
+Residual risk: the detector is disarmed unless the engagement signs thresholds, so manifests
+1.0–1.4 keep only the structural bounds above. A target that answers each repeated read with new bytes
+defeats both checks. Shadow mode over-approximates repetition and does not evaluate no-progress.

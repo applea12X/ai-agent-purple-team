@@ -121,6 +121,23 @@ ProposalSource = Literal["bounded-search", "model-driven"]
 PROPOSAL_SOURCE_ORDER: tuple[ProposalSource, ...] = ("bounded-search", "model-driven")
 
 
+class LoopGuardGrant(StrictModel):
+    """The signed thresholds of the kernel's runaway-loop detector (ADR 0018, loose end 5.3).
+
+    ``repeat_limit`` (N): the N-th occurrence, within one stage, of the same action-state hash --
+    the same canonical action taken while the kernel's observed-state digest is unchanged -- is
+    refused before dispatch and ends the run. ``no_progress_limit`` (K): K consecutive actions in
+    one stage that change nothing the kernel has observed end the run after the K-th. Both are
+    stop rules: they can only end a run sooner, never let it do anything its surface does not
+    already allow, which is why ``capability_delta`` classifies the grant as not-a-capability.
+    The upper bounds keep a signed value meaningful: a limit above every structural cap the
+    manifest can sign would be the detector switched off under another name.
+    """
+
+    repeat_limit: int = Field(ge=2, le=64)
+    no_progress_limit: int = Field(ge=1, le=256)
+
+
 class Phase5Grants(StrictModel):
     """Manifest 1.5 additions.
 
@@ -141,6 +158,10 @@ class Phase5Grants(StrictModel):
     #: The attacker's proposal source (WP5.1). ``None`` is ``bounded-search``; the field defaults
     #: to ``None`` so every 1.5 document written before it existed keeps its canonical bytes.
     proposal_source: ProposalSource | None = None
+    #: The runaway-loop detector's thresholds (ADR 0018). ``None`` -- every 1.5 document written
+    #: before the field existed -- leaves the detector disarmed, exactly as for manifests 1.0-1.4,
+    #: so their canonical bytes and every pinned outcome are unchanged.
+    loop_guard: LoopGuardGrant | None = None
 
     @field_validator("risk_approvals")
     @classmethod
@@ -187,6 +208,10 @@ class ShadowReport(StrictModel):
     unreachable_steps: int = Field(ge=0)
     adapter_calls: Literal[0] = 0
     created_at: datetime
+    #: Action-state hashes that reached the signed repeat limit during the walk -- runs an armed
+    #: loop guard (ADR 0018) would have stopped. ``None`` when there were none, so every report
+    #: written before the field existed, and every report of a clean walk, keeps its digest.
+    would_be_loops: int | None = Field(default=None, ge=1)
 
     @field_validator("run_id", "engagement_id")
     @classmethod
@@ -390,6 +415,11 @@ class EvaluationMatrix(SignedRecord):
     #: Why ``scenario_ids`` is the subset it is, when it is one (plan open question 4): the cut
     #: is written into the signed spec, never applied after a run.
     subset_rationale: str | None = Field(default=None, min_length=1, max_length=2000)
+    #: The runaway-loop thresholds every trial runs under (ADR 0018). Trials run on lane
+    #: manifests 1.3, which cannot carry the grant, so the signed spec carries it and the kernel
+    #: of each trial is armed with it. ``None`` -- every spec signed before the field existed --
+    #: leaves the detector disarmed and the spec's canonical bytes unchanged.
+    loop_guard: LoopGuardGrant | None = None
     alpha: float = Field(gt=0.0, lt=1.0)
     contrast_family: ContrastFamily = "each-defense-vs-baseline"
     contrast_test: Literal["mcnemar-exact"] = "mcnemar-exact"
