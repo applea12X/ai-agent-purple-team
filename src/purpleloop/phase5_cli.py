@@ -370,3 +370,8 @@ def register(app: typer.Typer) -> None:
     from purpleloop.benchmark_cli import register as register_benchmark
 
     register_benchmark(app)
+
+    # WP5.5: ``codelab-run`` and ``codelab-escape``.
+    from purpleloop.codelab_cli import register as register_codelab
+
+    register_codelab(app)

@@ -538,7 +538,7 @@ async def run_scenario(
         tokens = actor_credentials()
         control = secrets.token_hex(24)
         fixture = InProcessCodelab(tokens, control)
-    else:  # pragma: no cover - container lane passes its own credentials
+    else:
         tokens, control = _fixture_credentials(fixture)
     signed = manifest or approval.approved
     runner = build_codelab_runner(
@@ -566,8 +566,8 @@ async def run_scenario(
     )
 
 
-def _fixture_credentials(fixture: Fixture) -> tuple[dict[str, str], str]:  # pragma: no cover
-    if isinstance(fixture, ComposeCodelab):
+def _fixture_credentials(fixture: Fixture) -> tuple[dict[str, str], str]:
+    if isinstance(fixture, ComposeCodelab):  # pragma: no cover - container lane
         environment = fixture.environment
         return (
             json.loads(environment["CODELAB_ACTOR_CREDENTIALS"]),
@@ -650,7 +650,8 @@ class CodelabMetrics(StrictModel):
     corpus: dict[str, Any]
     risk_classes: tuple[dict[str, Any], ...]
     defense_credited: tuple[str, ...]
-    sandbox_jobs: int
+    #: Snippets the fixture handed to its sandbox; counted in process, ``None`` on the container.
+    sandbox_jobs: int | None
     replay: ReplayRecord | None = None
     approval_digest: str
     approver_key_provenance: str
@@ -663,7 +664,7 @@ def codelab_metrics(
     summaries: Sequence[RunSummary],
     stand_in: str,
     sandbox: str,
-    sandbox_jobs: int,
+    sandbox_jobs: int | None,
     approval: CodelabApproval,
     replay: ReplayRecord | None = None,
 ) -> CodelabMetrics:
@@ -731,3 +732,19 @@ async def replay_trials(
         rate=matched / total if total else 0.0,
         mismatched_scenarios=tuple(mismatched),
     )
+
+
+async def run_offline_corpus(root: Path) -> tuple[list[Phase1Scenario], list[RunSummary]]:
+    """The codelab corpus in process, one paired run each, under a freshly approved manifest.
+
+    The engine behind ``corpus-baseline --lane codelab``. The approval is ephemeral: it exists
+    for this call, is granted on this call's own shadow run, and is never written.
+    """
+    key = Ed25519PrivateKey.generate()
+    approval = await approve(root / "governance", key)
+    corpus = load_corpus()
+    summaries = [
+        await run_scenario(root / scenario.scenario_id, scenario, approval, inspect=False)
+        for scenario in corpus
+    ]
+    return corpus, summaries
