@@ -152,3 +152,18 @@ governance-check:
 
 shadow-run:
 	uv run purpleloop shadow-run artifacts/shadow
+
+# WP5.3 observability (phase5.yml job `observability`). `observability-up` starts the optional
+# collector profile; nothing else here needs Docker.
+.PHONY: observability-check observability-up observability-down
+observability-check:
+	uv run purpleloop telemetry-namespace --check
+	uv run pytest tests/phase5/test_telemetry.py tests/phase5/test_telemetry_runs.py \
+		tests/phase5/test_analysis.py --no-cov
+
+observability-up:
+	mkdir -p artifacts/observability/collector
+	docker compose -f compose.observability.yaml --profile observability up -d
+
+observability-down:
+	docker compose -f compose.observability.yaml --profile observability down

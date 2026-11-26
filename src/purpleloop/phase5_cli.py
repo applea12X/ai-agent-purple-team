@@ -32,6 +32,7 @@ from cryptography.hazmat.primitives.serialization import (
     load_pem_private_key,
 )
 
+from purpleloop import telemetry_cli
 from purpleloop.review import cli as review_cli
 from purpleloop.schemas.phase5 import CONTRACT_VERSIONS, ActionClass, RiskApproval
 
@@ -44,6 +45,7 @@ def _private_key(path: Path) -> Ed25519PrivateKey:
 
 
 def register(app: typer.Typer) -> None:
+    telemetry_cli.register(app)  # WP5.3 observe-suite, telemetry-*, analyze
     from purpleloop.matrix_cli import register as register_matrix
 
     register_matrix(app)  # WP5.2: matrix-sign, matrix-run, matrix-report
