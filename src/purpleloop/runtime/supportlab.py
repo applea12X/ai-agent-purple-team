@@ -312,9 +312,15 @@ def build_supportlab_runner(
     lane: LaneContract = SUPPORTLAB_LANE,
     model_provider: Provider | None = None,
     model_pin_id: str = OFFLINE_PIN,
+    model_timeout_seconds: float | None = None,
     admission: ApprovalAdmission | None = None,
     **runner_options: Any,
 ) -> PurpleTeamRunner:
+    """``model_timeout_seconds``, when given, replaces the per-call model timeout and the agent
+    adapter's per-turn timeout (30 s and 20 s by default). The evaluation matrix sets it from a
+    row's signed per-call expectation, so a slow pin is not excluded by a constant written for a
+    fast one; every other caller leaves it unset and gets exactly the earlier timeouts.
+    """
     transports = fixture.transports
     http = HttpAdapter(transports=transports, tools=lane.tools)
     tool = ToolAdapter(transports=transports, tools=lane.tools)
@@ -357,13 +363,17 @@ def build_supportlab_runner(
             },
             budgets=budgets,
         )
-        adapters["agent"] = AgentAdapter(
+        agent = AgentAdapter(
             model,
             pin_id=model_pin_id,
             tools=lane.tools,
             transports=transports,
             max_intents=manifest.phase3.max_tool_intents_per_turn,
         )
+        if model_timeout_seconds is not None:
+            model.timeout = model_timeout_seconds
+            agent.timeout = model_timeout_seconds
+        adapters["agent"] = agent
         definitions.extend(phase3_tools.AGENT_DEFINITIONS)
     registry = AdapterRegistry(
         tuple(
