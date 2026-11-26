@@ -33,6 +33,7 @@ from typing import Any
 import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from pydantic import Field, model_validator
 
 from purpleloop.adapters.base import Adapter
 from purpleloop.adapters.codelab import (
@@ -75,11 +76,20 @@ from purpleloop.schemas.authorization import (
     BudgetLimits,
     Phase1Grants,
 )
-from purpleloop.schemas.phase1 import Phase1Scenario, RunSummary, load_scenario, scenario_paths
+from purpleloop.schemas.common import StrictModel
+from purpleloop.schemas.phase1 import (
+    Phase1Scenario,
+    RunSummary,
+    load_ground_truth,
+    load_scenario,
+    scenario_paths,
+)
 from purpleloop.schemas.phase2 import OwnershipScope, Phase2Grants
 from purpleloop.schemas.phase3 import DecodingParameters, ModelPin, Phase3Grants
 from purpleloop.schemas.phase4 import Phase4Grants, RetentionRule
 from purpleloop.schemas.phase5 import ActionClass, Phase5Grants, RiskApproval, RunMode, ShadowReport
+from purpleloop.scoring.phase1 import corpus_metrics
+from purpleloop.scoring.phase4 import risk_class_metrics
 
 SCENARIOS = ROOT / "scenarios" / "codelab"
 GROUND_TRUTH = SCENARIOS / "ground-truth.json"
@@ -605,3 +615,119 @@ async def run_corpus(
     inventory(root, complete=True)
     verify_bundle(root)
     return summaries
+
+
+# --- metrics ------------------------------------------------------------------------------------
+
+
+class ReplayRecord(StrictModel):
+    """Deterministic replay for the lane: identical normalized event and oracle hashes."""
+
+    trials_per_scenario: int = Field(ge=2)
+    trials: int = Field(ge=0)
+    matched: int = Field(ge=0)
+    rate: float = Field(ge=0, le=1)
+    mismatched_scenarios: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def consistent(self) -> ReplayRecord:
+        if self.matched > self.trials or (
+            self.trials and abs(self.rate - self.matched / self.trials) > 1e-12
+        ):
+            raise ValueError("replay rate must equal matched / trials")
+        return self
+
+
+class CodelabMetrics(StrictModel):
+    """The codelab lane's numbers, reported per lane -- never folded into the authored 48."""
+
+    schema_version: str = "1.0.0"
+    lane: str = CODELAB_LANE.name
+    stand_in: str
+    sandbox: str
+    scenarios: int
+    statuses: dict[str, str]
+    corpus: dict[str, Any]
+    risk_classes: tuple[dict[str, Any], ...]
+    defense_credited: tuple[str, ...]
+    sandbox_jobs: int
+    replay: ReplayRecord | None = None
+    approval_digest: str
+    approver_key_provenance: str
+    note: str
+
+
+def codelab_metrics(
+    *,
+    scenarios: Sequence[Phase1Scenario],
+    summaries: Sequence[RunSummary],
+    stand_in: str,
+    sandbox: str,
+    sandbox_jobs: int,
+    approval: CodelabApproval,
+    replay: ReplayRecord | None = None,
+) -> CodelabMetrics:
+    truth = load_ground_truth(GROUND_TRUTH)
+    ids = {scenario.scenario_id for scenario in scenarios}
+    if {summary.scenario_id for summary in summaries} - ids:
+        raise ValueError("a run names a scenario outside the codelab corpus")
+    if any(scenario.lane != CODELAB_LANE.name for scenario in scenarios):
+        raise ValueError("codelab metrics accept codelab scenarios only")
+    return CodelabMetrics(
+        stand_in=stand_in,
+        sandbox=sandbox,
+        scenarios=len(summaries),
+        statuses={summary.scenario_id: summary.status for summary in summaries},
+        corpus=corpus_metrics(truth, summaries),
+        risk_classes=tuple(
+            item.model_dump(mode="json") for item in risk_class_metrics(scenarios, truth, summaries)
+        ),
+        defense_credited=tuple(
+            sorted(summary.scenario_id for summary in summaries if summary.mitigation_effective)
+        ),
+        sandbox_jobs=sandbox_jobs,
+        replay=replay,
+        approval_digest=approval.approval.approval_digest(),
+        approver_key_provenance=approval.approver_key_provenance,
+        note=(
+            "codelab lane, reported apart from the authored 48 and the benchmark subset. "
+            "Deterministic stand-in model: a measurement of the harness, the fixture's "
+            "defenses, and (on the container lane) the sandbox, not of any model."
+        ),
+    )
+
+
+async def replay_trials(
+    root: Path,
+    approval: CodelabApproval,
+    *,
+    trials: int = 3,
+    scenarios: Sequence[Phase1Scenario] | None = None,
+) -> ReplayRecord:
+    """Run each scenario ``trials`` times in process; every trial must hash identically."""
+    corpus = list(scenarios) if scenarios is not None else load_corpus()
+    matched = total = 0
+    mismatched = []
+    for scenario in corpus:
+        fingerprints = set()
+        for trial in range(trials):
+            summary = await run_scenario(
+                root / f"{scenario.scenario_id}-{trial}",
+                scenario,
+                approval,
+                inspect=False,
+                run_id=f"replay-{scenario.scenario_id}-{trial}",
+            )
+            fingerprints.add((summary.event_replay_hash, summary.oracle_hash, summary.status))
+            total += 1
+        if len(fingerprints) == 1 and None not in next(iter(fingerprints)):
+            matched += trials
+        else:
+            mismatched.append(scenario.scenario_id)
+    return ReplayRecord(
+        trials_per_scenario=trials,
+        trials=total,
+        matched=matched,
+        rate=matched / total if total else 0.0,
+        mismatched_scenarios=tuple(mismatched),
+    )
