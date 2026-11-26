@@ -15,5 +15,5 @@ never drift.
 - Evaluation methodology: [evaluation-methodology.md](evaluation-methodology.md)
 - Acceptance records: [Phase 0](phase0-acceptance.md), [Phase 1](phase1-acceptance.md),
   [Phase 2](phase2-acceptance.md), [Phase 3](phase3-acceptance.md), [Phase 4](phase4-acceptance.md),
-  and the Phase 5 work-package notes in [phase5/](phase5/), indexed by the
-  [loose-ends audit](phase5/loose-ends.md)
+  [Phase 5](phase5-acceptance.md) (an index of the work-package notes in [phase5/](phase5/)),
+  and the [loose-ends audit](phase5/loose-ends.md)

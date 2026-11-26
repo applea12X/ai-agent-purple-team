@@ -599,7 +599,7 @@ it. No stochastic result may gate a release-blocking invariant.
 - The deterministic lanes replay exactly as before; the stochastic lane reports its own measured
   variance instead of claiming determinism.
 
-### Phase 4 — CI quality system and portfolio release — implemented (2026-09-15); real-model checkpoints open
+### Phase 4 — CI quality system and portfolio release — implemented (2026-09-15); author-closable debt cleared by WP5.0 (2026-11-26); human, hosted-credential, and release items open
 
 The implemented design is documented in `docs/phase4-plan.md`; the measured results are in
 `docs/phase4-acceptance.md`. Both are authoritative over the pre-implementation task list that
@@ -623,6 +623,14 @@ Checkpoint — measured:
 - A pre-existing Phase 3 defect was found and fixed: attacker probes ran before binding scoring
   and decided verdicts. The corrected executed-unauthorized-side-effects figure is mean 0.96
   (previously published as 2.96).
+
+**Update (WP5.0, 2026-11-26, `docs/phase5-acceptance.md`):** the sampled corpus run, token
+calibration, a real (same-lineage) judge, and the compromised-model property were run on the
+local Ollama pin (`docs/phase5/wp5.0-real-model-acceptance.md`); the five gate classes and a
+control were observed blocking in GitHub Actions (`docs/phase5/wp5.0.7-acceptance.md`). Still
+open: hosted cost (blocked: hosted credential), the cross-family judge (blocked: different model
+family not installed), precision and the reviewer session (blocked: human), and the merge, tag,
+and CI-key release attestation (left to the author).
 
 **Open:** everything that needs a real model endpoint beyond the single local, temperature-0,
 one-scenario run of WP4.0.1 (a sampled run over the corpus, real API cost, a real judge, the
@@ -722,7 +730,17 @@ uncertainty and its limitations.
 - CI demonstrably blocks each of the five classes in WP4.4, proven by a deliberately failing branch
   per class.
 
-### Phase 5 — Optional expansion
+### Phase 5 — Optional expansion — implemented on `phase-5` (2026-11-26); not merged, v1 not tagged
+
+The working plan is `planning/phase5-plan.md`; the measured results are indexed in
+`docs/phase5-acceptance.md`, one acceptance note per work package under `docs/phase5/`.
+Measured: shadow mode never executes (0 adapter calls) and every uncovered capability increase is
+refused (6 of 6 kinds); the models × defenses matrix ran on 3 stand-ins and 2 local real pins with
+every agent defense classified; telemetry leaks nothing and changes no outcome; the review UI is
+inert and read-only; the codelab lane contained 10 of 10 escape attempts under hardened runc with
+recall 1.0, FP 0, replay 30 of 30; 6 of 8 authored benchmark cases were promoted; the PRD §7
+runaway-loop detector is in the kernel (ADR 0018). **Open:** a second model family, a hosted
+endpoint, every human measurement, the imported benchmark half (no upstream data), and gVisor.
 
 Only after v1, and each item is its own work package with its own acceptance note:
 

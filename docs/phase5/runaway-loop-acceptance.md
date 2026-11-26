@@ -115,7 +115,12 @@ commit.
 
 ## Quality gate and full suite
 
-FULL_SUITE_PLACEHOLDER
+The detector worker's own full suite did not finish before hand-back. The integrated run on
+`phase-5` at `1b23447`, which includes this work package and every other Phase 5 branch, is the
+full-suite figure for it: `uv run pytest --junitxml=artifacts/junit-phase5-final.xml -q` gave
+**1,307 collected, 1,299 passed, 8 environment-gated skips, 0 failed**, branch coverage
+**91.99%**, in 1,725.87 s. `tests/phase5/test_runaway_loop.py` (56 tests) passed inside it. Lint,
+format, and mypy were clean on the same tree. See [the Phase 5 index](../phase5-acceptance.md).
 
 ## What this does not show
 

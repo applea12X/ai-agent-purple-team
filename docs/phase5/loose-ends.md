@@ -58,9 +58,9 @@ One more value is used, because the audit found items that fit none of these:
 
 | # | Loose end | Source | Owner | Note |
 | --- | --- | --- | --- | --- |
-| 3.1 | No real model was called | phase3-acceptance: Known limits | WP5.0.2 | Partly closed by WP4.0.1 (`79af800`, `f20f482`): one scenario on local qwen2.5 7B. The sampled 25-scenario run is WP5.0.2. |
+| 3.1 | No real model was called | phase3-acceptance: Known limits | closed (WP5.0.2, `bc4370f`) | The 25-scenario corpus ran 5 sampled repetitions on local qwen2.5 7B (`845dbda0ea48`, temperature 0.7), three times: 300 verified bundles. See the [real-model record](wp5.0-real-model-acceptance.md). A hosted pin is still WP5.0.4 · blocked: hosted credential. |
 | 3.2 | API cost checkpoint met vacuously (measured zero) | phase3-acceptance: Token and cost | WP5.0.4 · blocked: hosted credential | — |
-| 3.3 | Judge figures measure harness hardening, not a real judge | phase3-acceptance: Judge | WP5.0.5 | A real judge on the local pin is author-closable (Ollama worker). The cross-family comparison is row 5.9. |
+| 3.3 | Judge figures measure harness hardening, not a real judge | phase3-acceptance: Judge | partly closed (WP5.0.5, `bc4370f`) | deepseek-r1 on the frozen 24-case corpus: α 0.304 [−0.067, 0.608], κ 0.667 (n 6), 0 critical false passes, advisory. Only 1 of 3 pre-registered trials completed (trial 1 hit the 300 s timeout). Same lineage as the target; cross-family is row 5.9. See the [real-model record](wp5.0-real-model-acceptance.md). |
 | 3.4 | Retrieval is lexical | phase3-acceptance: Known limits | accepted limit | ADR 0011. The vector variant is the alternative in Phase 5 open question 5, not chosen. |
 | 3.5 | No code-execution surface | phase3-acceptance: Known limits; PRD §7 threat coverage | WP5.5 | `codelab`, WP5.5.1–5.5.5. |
 | 3.6 | `ModelClient` cannot run the adapter contract suite by dispatch | phase3-acceptance: Known limits | accepted limit | ADR 0008. |
@@ -70,9 +70,9 @@ One more value is used, because the audit found items that fit none of these:
 | 3.10 | Real endpoint behaviour (latency, rate limits, partial responses, error shapes) untestable by the stub | phase3-acceptance: Coverage exclusions | WP5.0.4 · blocked: hosted credential | The local Ollama path was exercised by WP4.0.1. Hosted-endpoint 429/5xx storms are in the Phase 5 fault-injection plan (§5, WP5.2). |
 | 3.11 | Imported cases are not runnable | phase3-acceptance: Corpus | WP5.6 | WP5.6.1–5.6.5. |
 | 3.12 | Open question 1: reference pin, local and hosted | planning/phase3-plan §9 | WP5.0.4 · blocked: hosted credential | Local half closed by WP4.0.1. |
-| 3.13 | Open question 2: judge shares the target's family | planning/phase3-plan §9 | WP5.0.5 | A same-family delta is runnable locally (qwen target, qwen judge). Cross-family is row 5.9. |
+| 3.13 | Open question 2: judge shares the target's family | planning/phase3-plan §9 | partly closed (WP5.0.5) | The same-lineage measurement is in the [real-model record](wp5.0-real-model-acceptance.md). The cross-family delta is row 5.9 · blocked: different model family not installed. |
 | 3.14 | Open question 3: κ or α | planning/phase3-plan §9 | closed earlier | `f06d3dc`: both reported (phase3-acceptance "Judge"). |
-| 3.15 | Open question 4: nightly repetitions and per-scenario stochastic cost | planning/phase3-plan §9 | WP5.0.2 | 5 repetitions are fixed in the lanes. The per-scenario real cost measurement is WP5.0.2/5.0.3. |
+| 3.15 | Open question 4: nightly repetitions and per-scenario stochastic cost | planning/phase3-plan §9 | closed for tokens (WP5.0.2/5.0.3) | 5 repetitions; 2,998–3,637 tokens per repetition (mean 3,313.8) on the local pin. Money cost is WP5.0.4 · blocked: hosted credential. See the [real-model record](wp5.0-real-model-acceptance.md). |
 | 3.16 | Open question 5: model-driven attacker | planning/phase3-plan §9; `control/attacker.py` docstring | WP5.1.6 | — |
 | 3.17 | Open question 6: where utility under attack is measured | planning/phase3-plan §9 | closed earlier | `f257150`. |
 | 3.18 | Open question 7: imported cases in the 30–50 count | planning/phase3-plan §9 | closed earlier | `d347ddb`: not counted. Separate reporting is WP5.6.3. |
@@ -81,25 +81,25 @@ One more value is used, because the audit found items that fit none of these:
 
 | # | Loose end | Source | Owner | Note |
 | --- | --- | --- | --- | --- |
-| 4.1 | Real-model reproduction only at temperature 0; no sampled variance | phase4-acceptance: Summary, WP4.0.5 | WP5.0.2 | — |
+| 4.1 | Real-model reproduction only at temperature 0; no sampled variance | phase4-acceptance: Summary, WP4.0.5 | closed (WP5.0.2) | Temperature 0.7, per-repetition seeds, two disjoint seed sets (42–46, 1042–1046). See the [real-model record](wp5.0-real-model-acceptance.md). |
 | 4.2 | Precision on an adjudicated sample: untested | phase4-acceptance: Summary | WP5.0.8 · blocked: human | The `adjudicate` CLI and record format are author-buildable. The adjudication itself needs a human. |
 | 4.3 | Independent reviewer session: untested | phase4-acceptance: Summary | WP5.0.9 · blocked: human | The protocol and samples are in place. |
 | 4.4 | CI-observed red branches not run (not pushed) | phase4-acceptance: Enforcing gates | WP5.0.7 | Needs the five `gate-proof/*` branches pushed, which requires the user's go-ahead to push. |
 | 4.5 | Real API cost not met | phase4-acceptance: Summary | WP5.0.4 · blocked: hosted credential | — |
-| 4.6 | Real-judge agreement not run | phase4-acceptance: Summary, WP4.0.4 | WP5.0.5 | — |
+| 4.6 | Real-judge agreement not run | phase4-acceptance: Summary, WP4.0.4 | partly closed (WP5.0.5) | As row 3.3. |
 | 4.7 | Tests added after the 435-test run never counted together | phase4-acceptance: Quality gate, Follow-up | closed earlier | `6f3feb0` (WP5.0.1): 472 passed, 3 skipped. |
 | 4.8 | A full-suite run stalled (92 min, ~9 min CPU), cause undetermined | phase4-acceptance: Quality gate | closed earlier | `6f3feb0`: reproduced as system sleep. Likely, but unconfirmed for the original run. |
 | 4.9 | `pr-fast` wall time in CI never measured | phase4-acceptance: Fast PR lane; plan 4.1.3 | WP5.0.7 | — |
 | 4.10 | Regression pinning is corpus-granular | phase4-acceptance: Regression registry | closed here | `ae2ddc2` (WP5.0.10): 48 per-scenario node IDs. One injected regression names exactly one finding (`docs/phase5/wp5.0.10-acceptance.md`). |
 | 4.11 | Release attestation used an ephemeral key and recorded no commit | phase4-acceptance: Release lane | WP5.0.12 · blocked: human | The `release` job signs with `PURPLELOOP_ATTESTATION_KEY` from repository secrets. Only the repository owner can provision that secret. |
 | 4.12 | Retention policy and incident runbook never exercised | phase4-acceptance: Release lane | closed here (`90be6c2`, `54758fc`) | Four runbook classes drilled with real commands; every step found wrong or unfollowable was corrected in the runbook, and four points in the retention policy; the drill also found a cross-run masking defect in the Phase 4 scope gate (fixed, `54758fc`). `retention-plan` resolves the signed rules over a real suite. [Drill record](drill-acceptance.md). |
-| 4.13 | WP4.0.2 real-pin token calibration not fixed | phase4-acceptance: WP4.0 table | WP5.0.3 | — |
-| 4.14 | WP4.0.6 compromised-model property against a real model | phase4-acceptance: WP4.0 table | WP5.0.6 | Runnable on the local pin (Ollama worker). |
-| 4.15 | Only 1 of the 13 scenarios using `retrieval-provenance-guard` ran on a real model | phase4-acceptance: WP4.0.1 re-run | WP5.0.2 | — |
-| 4.16 | Email is the only sink gated by retrieval provenance | phase4-acceptance: WP4.0.1 re-run | WP5.0.2 | WP5.0.2 triages each real-model regression as an application finding, fixed in the fixture as `f20f482` was. |
+| 4.13 | WP4.0.2 real-pin token calibration not fixed | phase4-acceptance: WP4.0 table | closed (WP5.0.3, `955c12d`) | 462 in / 91 out per call (n 750), committed in `baselines/model-calibration/`; on a separate run the estimate was −0.20% from actual (±10% met). Cost half vacuous (price 0). See the [real-model record](wp5.0-real-model-acceptance.md). |
+| 4.14 | WP4.0.6 compromised-model property against a real model | phase4-acceptance: WP4.0 table | closed (WP5.0.6) | `containment-check` over 300 real-model bundles: 0 violations, no invented operation names. See the [real-model record](wp5.0-real-model-acceptance.md). |
+| 4.15 | Only 1 of the 13 scenarios using `retrieval-provenance-guard` ran on a real model | phase4-acceptance: WP4.0.1 re-run | closed (WP5.0.2) | All 25 agent scenarios ran on the real pin; WP5.2's real-pin subset ran 12 of them on two local pins. |
+| 4.16 | Email is the only sink gated by retrieval provenance | phase4-acceptance: WP4.0.1 re-run | closed (`d391f74`) | The real run found the guard prompt-only at the export, refund and CRM sinks; the fixture now enforces it there. Same-seed rerun: defended-replay attack 0/50. Pinned by `tests/phase5/test_real_model_findings.py`. See the [real-model record](wp5.0-real-model-acceptance.md). |
 | 4.17 | Provenance taint is per actor, most recent run, not full information flow | phase4-acceptance: WP4.0.1 re-run | accepted limit | Stated there as the fixture's model of provenance. |
 | 4.18 | Two of the three WP4.0.1 fixes were not revert-checked | phase4-acceptance: WP4.0.1 | closed here | Six behavioural reverts in a scratch copy (`b7fe527` ×2, `c557c80` ×2, `6322c03`, `f20f482`), each keeping every name importable: every one fails its pinning tests on an assertion, none at import. No new test was needed. See [loose-ends-2](wp5.0-loose-ends-2-acceptance.md). |
-| 4.19 | Nightly CI job has never run | phase4-acceptance: Known limits | WP5.0.7 | — |
+| 4.19 | Nightly CI job has never run | phase4-acceptance: Known limits | partly closed | The `phase5.yml` `nightly` job's offline path was run locally (loose-ends-2); it was never dispatched in GitHub Actions, and its real-model step needs `PURPLELOOP_MODEL_API_KEY` · blocked: hosted credential. |
 | 4.20 | New `pragma: no cover` lines (compose branches, two `OSError` handlers) | phase4-acceptance: Coverage exclusions | accepted limit | Named there. The compose branches were executed by the compose runs. |
 | 4.21 | GitGuardian exclusion of `baselines/` and `docs/samples/` removes scanning | phase4-acceptance: Follow-up | closed earlier | `2bd3c2d`: `tests/phase4/test_sample_hygiene.py` replaces it. |
 | 4.22 | Committed samples and corpus baseline named a commit that did not produce them | phase4-acceptance: Follow-up | closed earlier | `2bd3c2d`: regenerated at `672bda2`. |
@@ -131,17 +131,17 @@ One more value is used, because the audit found items that fit none of these:
 | 5.2 | Dry-run execution | PRD §7 Safety kernel | WP5.1.2 | Shadow mode. |
 | 5.3 | **Detect repeated or no-progress action-state hashes and stop runaway loops** | PRD §7 Safety kernel | closed here (worker runaway-loop) | Confirmed absent at `425e8b2`: the existing caps bound how much a run does, not whether it repeats itself. `control/loop_guard.py`, owned by `SafetyRuntime`, hashes every target-plane action from every source (plan, model intent, refused or rejected intent, bounded and model-driven attacker, matrix trial, codelab `analysis.run`/`report.publish` intent) against a per-stage digest of the outcomes the kernel recorded. The N-th repetition is refused before dispatch, and the K-th consecutive no-progress action ends the run `RUNAWAY_LOOP_DETECTED`, latched, teardown run, audit-exported. Shadow only reports (`would_be_loops`). N/K are signed (`phase5.loop_guard`, `EvaluationMatrix.loop_guard`). Disarmed without a grant, so no pinned outcome moves. 25 agent scenarios armed at 2/4 equal their pins. [ADR 0018](../adr/0018-runaway-loop-detection.md), [acceptance](runaway-loop-acceptance.md), `tests/phase5/test_runaway_loop.py`. |
 | 5.4 | Rollback checks | PRD §7 Safety kernel | closed earlier | Reset verified by snapshot-hash equality before each leg (ADR 0005, `03f05e2`). |
-| 5.5 | OpenTelemetry event export | PRD §4 | WP5.3.1 | — |
-| 5.6 | DuckDB/Parquet analysis output | PRD §4, §5 | WP5.3.6 | — |
+| 5.5 | OpenTelemetry event export | PRD §4 | closed (WP5.3) | [WP5.3 record](wp5.3-acceptance.md). |
+| 5.6 | DuckDB/Parquet analysis output | PRD §4, §5 | closed (WP5.3.6) | `purpleloop analyze` (`duckdb==2.0.1`). The WP5.2 matrix export stays JSON. |
 | 5.7 | Bounded LangGraph attack policies (optional) | PRD §4 | WP5.1.6 | The plan's model-driven attacker profile. LangGraph itself is not chosen anywhere. |
 | 5.8 | Evaluator resistance to contamination, non-determinism, reward hacking, aggregation masking | PRD §7 Judging | WP5.6.3 (contamination) | Non-determinism: repeated trials and order swaps (`f06d3dc`). Reward hacking: the rubric-gaming cases. Aggregation masking: no composite score is ever reported. Those three were closed earlier. Contamination: `public_exposure` labelling, WP5.6.3. |
 | 5.9 | A second real model from a different family (matrix rows, cross-family judge delta) | Phase 5 plan WP5.2.2, WP5.0.5 | blocked: different model family not installed | All installed local models are Qwen-lineage. A hosted pin would also do: blocked: hosted credential. |
 | 5.10 | Human calibration of the judge | PRD §7 Judging | WP5.0.8 · blocked: human | And WP5.4 (review UI). |
 | 5.11 | Risk-approval documents and an approver key | PRD §8 Phase 5; Phase 5 plan open question 3 | WP5.1.4 · blocked: human | A second-person approver is a human; otherwise an offline author key, recorded as such. |
-| 5.12 | Pinned models × defenses matrix | PRD §8 Phase 5 | WP5.2 | — |
-| 5.13 | Self-hosted observability profile; human-review UI | PRD §8 Phase 5 | WP5.3, WP5.4 | — |
-| 5.14 | Additional disposable target fixture | PRD §8 Phase 5 | WP5.5 | — |
-| 5.15 | Benchmark subsets runnable | PRD §8 Phase 5 | WP5.6 | — |
+| 5.12 | Pinned models × defenses matrix | PRD §8 Phase 5 | partly closed (WP5.2) | Stand-ins met; real rows on two Qwen-lineage local pins (deepseek row incomplete). Different families: row 5.9. [WP5.2 record](wp5.2-acceptance.md). |
+| 5.13 | Self-hosted observability profile; human-review UI | PRD §8 Phase 5 | closed (WP5.3, WP5.4) | [WP5.3](wp5.3-acceptance.md), [WP5.4](wp5.4-acceptance.md). The timed human session on the UI is row 4.3. |
+| 5.14 | Additional disposable target fixture | PRD §8 Phase 5 | closed (WP5.5) | [WP5.5 record](wp5.5-acceptance.md): hardened runc; gVisor not available on this host. |
+| 5.15 | Benchmark subsets runnable | PRD §8 Phase 5 | partly closed (WP5.6) | Authored half: 6 of 8 promoted. Imported half blocked: no upstream AgentDojo data available locally. [WP5.6 record](wp5.6-acceptance.md). |
 | 5.16 | v1 not declared: no tag, no clean-commit attestation | Phase 5 plan §0 | WP5.0.12 | — |
 | 5.17 | PRD §11 item 6, "CI artifacts" a reviewer can inspect | PRD §11 | WP5.0.7 | — |
 
