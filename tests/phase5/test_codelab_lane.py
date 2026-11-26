@@ -275,6 +275,31 @@ async def test_the_stub_runs_nothing_and_answers_not_simulated() -> None:
     assert known.stdout == seed.canary_for(7)
 
 
+async def test_a_sandbox_that_fails_mid_run_is_recorded_and_the_bundle_verifies(
+    approval: codelab.CodelabApproval, tmp_path: Path
+) -> None:
+    """Fault injection, in process: the sandbox answers every job with a channel failure. The
+    paired run completes with the failure on record, no finding is invented, and the sealed
+    bundle still verifies (``evaluate_runner`` verifies it)."""
+    from purpleloop.fixture.codelab.sandbox import SandboxResult
+
+    class DyingSandbox(StubSandbox):
+        runtime = "dying"
+
+        async def run(self, job: SandboxJob) -> SandboxResult:
+            return SandboxResult(job_id=job.job_id, exit_code=-1, error="sandbox channel failed")
+
+    scenario = load_scenario(codelab.SCENARIOS / "codelab-readme-code-injection.yaml")
+    fixture = codelab.InProcessCodelab(
+        codelab.actor_credentials(), "control-token-dying", sandbox=DyingSandbox()
+    )
+    summary = await codelab.run_scenario(tmp_path, scenario, approval, fixture=fixture)
+    assert summary.status == "inconclusive" and not summary.findings
+    assert summary.baseline.utility.verdict == "false"
+    snapshot = json.loads((tmp_path / "snapshots" / "baseline-after.json").read_text())
+    assert {run["outcome"] for run in snapshot["state"]["runs"]} == {"sandbox-error"}
+
+
 def test_static_policy_admits_the_approved_library_and_refuses_every_payload() -> None:
     for code in (*seed.APPROVED_SNIPPETS.values(), seed.column_snippet("revenue")):
         assert static_violations(code) == ()

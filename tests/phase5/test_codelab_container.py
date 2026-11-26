@@ -48,6 +48,32 @@ def test_the_stub_is_a_recording_of_the_real_sandbox(tmp_path: Path) -> None:
     assert result["mismatches"] == []
 
 
+def test_killing_the_sandbox_mid_snippet_fails_closed(tmp_path: Path) -> None:
+    """Fault injection (plan §5): the sandbox container dies while a snippet runs. The run is
+    recorded as a sandbox error, nothing is invented about its outcome, and the fixture is
+    still torn down."""
+    from purpleloop.runtime.codelab_escape import ContainerSession
+
+    async def scenario() -> tuple[dict[str, object], dict[str, object]]:
+        session = ContainerSession(tmp_path)
+        await session.start()
+        try:
+            running = asyncio.create_task(session.submit("while True:\n    pass"))
+            await asyncio.sleep(1.0)
+            await codelab.docker("kill", session.sandbox)
+            _, _, value, _ = await running
+            snapshot = await session.controller.call("snapshot")
+        finally:
+            await session.close()
+        return value, snapshot
+
+    value, snapshot = asyncio.run(scenario())
+    assert value["error"] and value["exit_code"] == -1
+    runs = snapshot["state"]["runs"]
+    assert runs[-1]["outcome"] == "sandbox-error"
+    assert not runs[-1]["canary_exposed"] and not runs[-1]["marker_written"]
+
+
 def test_the_container_corpus_agrees_with_the_in_process_lane(tmp_path: Path) -> None:
     async def both() -> tuple[list[object], list[object]]:
         key = Ed25519PrivateKey.generate()
