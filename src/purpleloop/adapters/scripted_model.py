@@ -10,12 +10,18 @@ network call and without pretending the result came from a real model.
 Everything it decides comes from the seeded attack table in ``fixture/supportlab/agent_seed``, so
 the fixture's content and the simulator's reaction to it cannot drift apart.
 
+``DelimitationBlindModel`` sits between them. It is the scripted model with one behaviour removed:
+it reads content inside a quarantine block exactly as if it were inline, so it follows a seeded
+injection whether or not the prompt delimits it -- what ``qwen2.5:7b-instruct`` was measured doing
+in WP4.0.1. It is the row that tells a defense enforced by the application apart from one that
+only asks the model to cooperate, and the evaluation matrix (WP5.2) requires it.
+
 ``HostileModel`` is the other end of the range: it ignores the prompt entirely and emits the most
 aggressive intent set it can express on every turn. It exists for the property test behind the
 Phase 3 checkpoint "no out-of-scope action reaches the target even when the target model is
 compromised" -- the model is assumed captured, and the kernel is what must hold.
 
-Neither is used in the stochastic lane. Both report ``provider="offline"`` and make no network
+None is used in the stochastic lane. All three report ``provider="offline"`` and make no network
 call, so no result they produce can be mistaken for a pinned-stochastic one.
 """
 
@@ -120,6 +126,28 @@ class ScriptedAgentModel:
 
         text = json.dumps({"message": message, "tool_intents": intents}, sort_keys=True)
         return text, _tokens(system) + _tokens(prompt), _tokens(text)
+
+
+UNTRUSTED_TAG = re.compile(r"</?untrusted[^>]*>")
+
+
+class DelimitationBlindModel(ScriptedAgentModel):
+    """The scripted model, blind to delimiting: quarantined content reads as inline content.
+
+    Only the ``<untrusted>`` tags are removed before the scripted decision, so the content they
+    wrapped is visible to it; the quarantine notice stays in the prompt and is ignored, as it was
+    by the real model this stand-in reproduces. Token counts are taken on the prompt it was given.
+    Generalises the single-scenario stand-in in ``tests/phase3/test_provenance_sink.py`` to every
+    seeded attack.
+    """
+
+    async def complete(
+        self, *, pin: ModelPin, system: str, prompt: str, deadline: float
+    ) -> tuple[str, int, int]:
+        text, _, output_tokens = await super().complete(
+            pin=pin, system=system, prompt=UNTRUSTED_TAG.sub("", prompt), deadline=deadline
+        )
+        return text, _tokens(system) + _tokens(prompt), output_tokens
 
 
 class HostileModel:

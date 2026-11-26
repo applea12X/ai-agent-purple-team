@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import re
 from collections.abc import Sequence
 from pathlib import Path
 from types import MappingProxyType
@@ -43,7 +42,7 @@ from purpleloop.adapters.importers import (
     promote_subset,
 )
 from purpleloop.adapters.model_provider import Provider
-from purpleloop.adapters.scripted_model import ScriptedAgentModel
+from purpleloop.adapters.scripted_model import DelimitationBlindModel, ScriptedAgentModel
 from purpleloop.control.benchmark_tools import BENCHMARK_DEFENSES
 from purpleloop.control.lanes import AGENT_LANE, LaneContract
 from purpleloop.control.manifest import ManifestVerifier
@@ -66,7 +65,6 @@ from purpleloop.schemas.phase1 import (
     load_scenario,
     scenario_paths,
 )
-from purpleloop.schemas.phase3 import ModelPin
 from purpleloop.scoring.phase1 import corpus_metrics
 
 BENCHMARK_ROOT = ROOT / "scenarios" / "benchmark"
@@ -86,24 +84,11 @@ BENCHMARK_LANE: LaneContract = dataclasses.replace(
     defenses=MappingProxyType(BENCHMARK_DEFENSES),
 )
 
-UNTRUSTED_TAG = re.compile(r"</?untrusted[^>]*>")
-
-
-class DelimitationBlindScriptedModel(ScriptedAgentModel):
-    """The scripted stand-in with its one defense-relevant behaviour removed.
-
-    ``ScriptedAgentModel`` ignores directives inside ``<untrusted>`` blocks. This variant strips
-    the block markers first, so it follows an injected directive wherever it appears -- the
-    behaviour ``qwen2.5:7b-instruct`` showed in WP4.0.1. A defense credited under it is enforced
-    by the application, not by the model's cooperation. Offline, deterministic, no network.
-    """
-
-    async def complete(
-        self, *, pin: ModelPin, system: str, prompt: str, deadline: float
-    ) -> tuple[str, int, int]:
-        return await super().complete(
-            pin=pin, system=system, prompt=UNTRUSTED_TAG.sub("", prompt), deadline=deadline
-        )
+#: The delimitation-blind stand-in, defined once in ``adapters.scripted_model`` and shared with
+#: the evaluation matrix (WP5.2). It strips the ``<untrusted>`` markers before deciding, so it
+#: follows an injected directive wherever it appears -- the behaviour ``qwen2.5:7b-instruct``
+#: showed in WP4.0.1. The name is kept so existing references keep working.
+DelimitationBlindScriptedModel = DelimitationBlindModel
 
 
 STAND_INS: dict[str, type[ScriptedAgentModel]] = {
