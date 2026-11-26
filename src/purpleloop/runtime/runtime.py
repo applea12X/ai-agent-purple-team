@@ -22,6 +22,7 @@ from purpleloop.control.loop_guard import (
     outcome_digest,
     rejected_fingerprint,
     step_fingerprint,
+    stricter_grant,
 )
 from purpleloop.control.manifest import ManifestError, ManifestVerifier
 from purpleloop.control.policy import PolicyEngine
@@ -38,6 +39,7 @@ from purpleloop.schemas.authorization import AuthorizationManifest
 from purpleloop.schemas.common import StrictModel, digest_data
 from purpleloop.schemas.event import SHADOW_EVENT_SCHEMA, EventKind, EvidenceEvent
 from purpleloop.schemas.phase1 import Step
+from purpleloop.schemas.phase5 import LoopGuardGrant
 
 
 class BoundaryDenied(RuntimeError):
@@ -93,6 +95,7 @@ class SafetyRuntime:
         clock: Callable[[], datetime] | None = None,
         shadow: bool = False,
         admission: ApprovalAdmission | None = None,
+        loop_guard: LoopGuardGrant | None = None,
     ) -> None:
         self.verifier = verifier
         self.policy = policy
@@ -112,6 +115,10 @@ class SafetyRuntime:
         #: The runaway-loop detector (ADR 0018), one per signed manifest digest. Disarmed -- and
         #: silent -- unless the manifest signs ``phase5.loop_guard``.
         self._loop_guards: dict[str, LoopGuard] = {}
+        #: Thresholds from another signed document the host verified before building this
+        #: runtime -- the evaluation matrix spec, whose trials run on manifests 1.3 that cannot
+        #: carry the grant. Combined with a manifest grant by taking the stricter of each limit.
+        self.host_loop_guard = loop_guard
         self.scenario_id: str | None = None
         self.scenario_version: str | None = None
         self.stage: str | None = None
@@ -530,8 +537,10 @@ class SafetyRuntime:
         digest = digest or manifest.manifest_digest()
         guard = self._loop_guards.get(digest)
         if guard is None:
-            grant = manifest.phase5.loop_guard if manifest.phase5 is not None else None
-            guard = self._loop_guards[digest] = LoopGuard(grant)
+            signed = manifest.phase5.loop_guard if manifest.phase5 is not None else None
+            guard = self._loop_guards[digest] = LoopGuard(
+                stricter_grant(signed, self.host_loop_guard)
+            )
         return guard
 
     @property

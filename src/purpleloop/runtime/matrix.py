@@ -578,6 +578,9 @@ async def _run_trial(
         model_provider=provider,
         model_pin_id=row.pin.pin_id,
         model_timeout_seconds=timeout,
+        # The spec is signed and verified before any trial; its loop thresholds arm each trial's
+        # kernel (ADR 0018). A looping trial ends RUNAWAY_LOOP_DETECTED, like any kernel stop.
+        loop_guard=spec.loop_guard,
     )
     assert manifest.phase3 is not None
     pin = manifest.phase3.pin(row.pin.pin_id)

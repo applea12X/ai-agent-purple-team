@@ -120,6 +120,17 @@ def action_state_hash(fingerprint: str, state: str) -> str:
     return digest_data({"action": fingerprint, "state": state})
 
 
+def stricter_grant(*grants: LoopGuardGrant | None) -> LoopGuardGrant | None:
+    """The tightest of the signed grants on hand, limit by limit; ``None`` when there are none."""
+    present = [grant for grant in grants if grant is not None]
+    if not present:
+        return None
+    return LoopGuardGrant(
+        repeat_limit=min(grant.repeat_limit for grant in present),
+        no_progress_limit=min(grant.no_progress_limit for grant in present),
+    )
+
+
 @dataclass(frozen=True)
 class LoopTrip:
     """One detection, as recorded in the ``RUNAWAY_LOOP_DETECTED`` event."""

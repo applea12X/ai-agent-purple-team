@@ -933,3 +933,119 @@ def test_refused_steps_latch_in_execute_and_only_report_in_shadow(tmp_path: Path
     disarmed, _ = kernel(tmp_path / "off", grant)
     unguarded = agent_manifest_15(Ed25519PrivateKey.generate())
     assert not disarmed.refused_step(unguarded, step(), "R", run_id="p", trace_id="t")
+
+
+# --- the evaluation matrix: its trials meet the same kernel --------------------------------------
+
+
+def test_the_stricter_grant_wins_limit_by_limit() -> None:
+    from purpleloop.control.loop_guard import stricter_grant
+
+    loose = LoopGuardGrant(repeat_limit=5, no_progress_limit=3)
+    tight = LoopGuardGrant(repeat_limit=2, no_progress_limit=9)
+    assert stricter_grant(loose, tight) == LoopGuardGrant(repeat_limit=2, no_progress_limit=3)
+    assert stricter_grant(None, tight) == tight
+    assert stricter_grant(None, None) is None
+
+
+def looping_endpoint(request: Any) -> Any:
+    import httpx
+
+    content = json.dumps({"message": "Again.", "tool_intents": [MAILBOX] * 4})
+    return httpx.Response(
+        200,
+        json={
+            "choices": [{"message": {"content": content}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 20},
+        },
+    )
+
+
+def matrix_trials(tmp_path: Path, guard: LoopGuardGrant | None) -> list[Any]:
+    from datetime import UTC, datetime
+
+    import httpx
+
+    from purpleloop import matrix_cli
+    from purpleloop.adapters.model_provider import OpenAICompatibleProvider
+    from purpleloop.control.phase5_signing import sign_record
+    from purpleloop.runtime.matrix import (
+        BASELINE_COLUMN,
+        MATRIX_COLUMNS,
+        anchor_row,
+        real_row,
+        run_matrix,
+    )
+    from purpleloop.schemas.phase3 import DecodingParameters
+    from purpleloop.schemas.phase5 import EvaluationMatrix
+
+    seeds = (42, 43, 44, 45, 46)
+    stub = real_row(
+        "looping-pin",
+        profile="ollama",
+        model_id="stub-model",
+        model_version="stub-v1",
+        decoding=DecodingParameters(temperature=0.7, seed=42, max_output_tokens=256),
+        seeds=seeds,
+        expected_seconds_per_call=2.0,
+    )
+    spec = EvaluationMatrix.model_validate(
+        {
+            "matrix_id": "loop-matrix",
+            "engagement_id": "purpleloop-matrix-test",
+            "rows": (anchor_row("delimitation-blind", seeds=seeds), stub),
+            "defense_columns": MATRIX_COLUMNS,
+            "baseline_column": BASELINE_COLUMN,
+            "scenario_ids": frozenset({"agent-indirect-ticket"}),
+            "repetitions": 5,
+            "cost_cap_microusd": 0,
+            "wall_time_cap_seconds": 3600,
+            "loop_guard": guard,
+            "alpha": 0.05,
+            "issued_at": datetime(2026, 11, 25, tzinfo=UTC),
+            "key_id": "test-matrix-key",
+            "signature": "",
+        }
+    )
+    spec = sign_record(spec, Ed25519PrivateKey.generate())
+    provider = OpenAICompatibleProvider(
+        base_url="http://127.0.0.1:11434/v1",
+        credential=None,
+        profile="ollama",
+        transport=httpx.MockTransport(looping_endpoint),
+    )
+    run = asyncio.run(
+        run_matrix(
+            spec,
+            matrix_cli.agent_corpus(),
+            tmp_path,
+            Ed25519PrivateKey.generate(),
+            providers={"looping-pin": provider},
+        )
+    )
+    return run.trials
+
+
+def test_matrix_trials_are_armed_by_the_signed_spec(tmp_path: Path) -> None:
+    trials = matrix_trials(tmp_path / "armed", GUARD)
+    looping = [t for t in trials if t.row_id == "looping-pin"]
+    anchors = [t for t in trials if t.row_id != "looping-pin"]
+    assert looping and all(t.reason == RUNAWAY_LOOP_DETECTED for t in looping)
+    assert anchors and not any(t.reason == RUNAWAY_LOOP_DETECTED for t in anchors)
+    for trial in looping:
+        events = [
+            EvidenceEvent.model_validate_json(line)
+            for line in (tmp_path / "armed" / trial.bundle / "evidence.jsonl")
+            .read_text()
+            .splitlines()
+        ]
+        assert_stopped_at_detection(events)
+
+
+def test_an_unarmed_matrix_spec_leaves_its_trials_as_they_were(tmp_path: Path) -> None:
+    from purpleloop.schemas.phase5 import EvaluationMatrix
+
+    assert EvaluationMatrix.model_fields["loop_guard"].default is None
+    trials = matrix_trials(tmp_path / "unarmed", None)
+    looping = [t for t in trials if t.row_id == "looping-pin"]
+    assert looping and not any(t.reason == RUNAWAY_LOOP_DETECTED for t in trials)

@@ -54,6 +54,7 @@ from purpleloop.schemas.authorization import (
 )
 from purpleloop.schemas.phase2 import OwnershipScope, Phase2Grants
 from purpleloop.schemas.phase3 import DecodingParameters, ModelPin, Phase3Grants
+from purpleloop.schemas.phase5 import LoopGuardGrant
 from purpleloop.scoring.judge import HybridJudge, ScriptedJudge
 
 MODEL_FIXTURE = ROOT / "scenarios" / "supportlab" / "model-responses.json"
@@ -314,6 +315,7 @@ def build_supportlab_runner(
     model_pin_id: str = OFFLINE_PIN,
     model_timeout_seconds: float | None = None,
     admission: ApprovalAdmission | None = None,
+    loop_guard: LoopGuardGrant | None = None,
     **runner_options: Any,
 ) -> PurpleTeamRunner:
     """``model_timeout_seconds``, when given, replaces the per-call model timeout and the agent
@@ -401,6 +403,7 @@ def build_supportlab_runner(
         adapter=registry,
         ledger=EvidenceLedger(output_dir / "evidence.jsonl"),
         admission=admission,
+        loop_guard=loop_guard,
     )
     return PurpleTeamRunner(
         runtime, close=fixture.close, lane=lane, browser=browser, **runner_options

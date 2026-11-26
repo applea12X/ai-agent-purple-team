@@ -415,6 +415,11 @@ class EvaluationMatrix(SignedRecord):
     #: Why ``scenario_ids`` is the subset it is, when it is one (plan open question 4): the cut
     #: is written into the signed spec, never applied after a run.
     subset_rationale: str | None = Field(default=None, min_length=1, max_length=2000)
+    #: The runaway-loop thresholds every trial runs under (ADR 0018). Trials run on lane
+    #: manifests 1.3, which cannot carry the grant, so the signed spec carries it and the kernel
+    #: of each trial is armed with it. ``None`` -- every spec signed before the field existed --
+    #: leaves the detector disarmed and the spec's canonical bytes unchanged.
+    loop_guard: LoopGuardGrant | None = None
     alpha: float = Field(gt=0.0, lt=1.0)
     contrast_family: ContrastFamily = "each-defense-vs-baseline"
     contrast_test: Literal["mcnemar-exact"] = "mcnemar-exact"
