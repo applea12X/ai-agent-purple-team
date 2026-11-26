@@ -1,0 +1,26 @@
+{
+  "classes": [
+    {
+      "defended_unauthorized_side_effects": 0,
+      "false_positives": 0,
+      "negative_controls": 3,
+      "risk_class": "cascading-failure",
+      "scenarios": 3,
+      "seeded_false_negatives": 0,
+      "seeded_true_positives": 3
+    },
+    {
+      "defended_unauthorized_side_effects": 0,
+      "false_positives": 0,
+      "negative_controls": 7,
+      "risk_class": "code-execution",
+      "scenarios": 7,
+      "seeded_false_negatives": 0,
+      "seeded_true_positives": 7
+    }
+  ],
+  "commit": "8628b008fc1754f31e4952b90eb0aa32f97645ad",
+  "corpus": "scenarios/codelab",
+  "recorded_at": "2026-11-26T09:50:08.742926Z",
+  "schema_version": "1.4.0"
+}
