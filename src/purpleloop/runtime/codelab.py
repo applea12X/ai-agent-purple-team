@@ -257,6 +257,7 @@ class ComposeCodelab:  # pragma: no cover - container lane (tests/phase5/test_co
         }
         self.transports = None
         self.closed = False
+        self.started = False
 
     async def compose(self, *args: str) -> str:
         process = await asyncio.create_subprocess_exec(
@@ -277,13 +278,6 @@ class ComposeCodelab:  # pragma: no cover - container lane (tests/phase5/test_co
             raise RuntimeError(f"Compose command failed: {stderr.decode()[:1000]}")
         return stdout.decode()
 
-    async def start(self) -> None:
-        try:
-            await self.compose("up", "--build", "--wait", "--wait-timeout", "120")
-        except BaseException:
-            await self.close()
-            raise
-
     async def container_id(self, service: str) -> str:
         return (await self.compose("ps", "-q", service)).strip()
 
@@ -292,9 +286,24 @@ class ComposeCodelab:  # pragma: no cover - container lane (tests/phase5/test_co
         return (await docker("inspect", "--format", "{{.HostConfig.Runtime}}", container)).strip()
 
     async def close(self) -> None:
+        """A run's teardown. With ``keep`` the deployment outlives the run (a suite shares one
+        deployment; each run still provisions, seeds, and resets it); :meth:`down` removes it."""
         if not self.keep:
-            await self.compose("down", "--volumes", "--timeout", "0")
+            await self.down()
         self.closed = True
+
+    async def down(self) -> None:
+        await self.compose("down", "--volumes", "--timeout", "0")
+
+    async def start(self) -> None:
+        if self.started:
+            return
+        try:
+            await self.compose("up", "--build", "--wait", "--wait-timeout", "120")
+        except BaseException:
+            await self.down()
+            raise
+        self.started = True
 
 
 async def docker(*args: str) -> str:  # pragma: no cover - container lane
