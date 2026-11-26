@@ -36,6 +36,7 @@ from purpleloop.control.manifest import ManifestVerifier
 from purpleloop.reporting.audit_export import export_audit
 from purpleloop.reporting.bundle import verify_bundle
 from purpleloop.runtime.governance import agent_manifest_15, committed_admission
+from purpleloop.runtime.ledger import EvidenceLedger
 from purpleloop.runtime.pinning import SUPPORTLAB_CONTROL
 from purpleloop.runtime.supportlab import (
     KEY_ID,
@@ -243,6 +244,13 @@ def test_a_write_outcome_is_bound_to_the_write_and_a_read_outcome_is_not() -> No
     )
     assert outcome_digest(write_a, SideEffectClass.READ, "ok", ack) != outcome_digest(
         write_a, SideEffectClass.READ, "ok", {"value": {"ok": False}}
+    )
+    # A target that numbers its acknowledgements cannot make a repeated write look like progress.
+    assert outcome_digest(
+        write_a, SideEffectClass.WRITE, "ok", {"value": {"publication": 1}}
+    ) == outcome_digest(write_a, SideEffectClass.WRITE, "ok", {"value": {"publication": 2}})
+    assert outcome_digest(write_a, SideEffectClass.WRITE, "ok", ack) != outcome_digest(
+        write_a, SideEffectClass.WRITE, "403", ack
     )
 
 
@@ -1049,3 +1057,75 @@ def test_an_unarmed_matrix_spec_leaves_its_trials_as_they_were(tmp_path: Path) -
     trials = matrix_trials(tmp_path / "unarmed", None)
     looping = [t for t in trials if t.row_id == "looping-pin"]
     assert looping and not any(t.reason == RUNAWAY_LOOP_DETECTED for t in trials)
+
+
+# --- codelab (WP5.5): model-emitted analysis.run and report.publish meet the same kernel ---------
+
+CODELAB_INTENTS = {
+    "analysis.run": {
+        "operation": "analysis.run",
+        "arguments": {"dataset": "sales", "code": "print(1)"},
+    },
+    "report.publish": {
+        "operation": "report.publish",
+        "arguments": {"destination": "team-notebook", "title": "Again", "body": "Same body."},
+    },
+}
+
+
+@pytest.fixture(scope="module")
+def codelab_approval(tmp_path_factory: pytest.TempPathFactory) -> Any:
+    """The codelab manifest armed at 3/8, shadowed and approved for its exact delta."""
+    from purpleloop.runtime import codelab
+
+    corpus = codelab.load_corpus()[:1]
+    return asyncio.run(
+        codelab.approve(
+            tmp_path_factory.mktemp("codelab-loop"),
+            Ed25519PrivateKey.generate(),
+            scenarios=corpus,
+            loop_guard=GUARD,
+        )
+    )
+
+
+@pytest.mark.parametrize("operation", sorted(CODELAB_INTENTS))
+def test_a_codelab_model_looping_on_one_tool_call_is_stopped(
+    codelab_approval: Any, tmp_path: Path, operation: str
+) -> None:
+    from purpleloop.runtime import codelab
+
+    assert codelab_approval.approved.phase5.loop_guard == GUARD
+    scenario = codelab.load_corpus()[0]
+    fixture = codelab.InProcessCodelab(codelab.actor_credentials(), "control-token-loop")
+    summary = asyncio.run(
+        codelab.run_scenario(
+            tmp_path,
+            scenario,
+            codelab_approval,
+            fixture=fixture,
+            model=LoopingModel([CODELAB_INTENTS[operation]] * 4),
+            inspect=False,
+        )
+    )
+    events = EvidenceLedger(tmp_path / "evidence.jsonl").verify()
+    assert summary.reason == RUNAWAY_LOOP_DETECTED, summary.reason
+    found = detections(events)
+    assert len(found) == 1 and found[0].data["check"] == "repetition"
+    compiled = [
+        e
+        for e in events
+        if e.reason_code == "TOOL_INTENT_COMPILED" and e.data["action"]["operation"] == operation
+    ]
+    assert compiled
+    assert_stopped_at_detection(events)
+    assert summary.teardown_complete
+
+
+def test_the_unarmed_codelab_manifest_is_unchanged() -> None:
+    from purpleloop.runtime import codelab
+
+    key = Ed25519PrivateKey.generate()
+    manifest = codelab.codelab_manifest(key)
+    assert manifest.phase5 is not None and manifest.phase5.loop_guard is None
+    assert b"loop_guard" not in manifest.canonical_bytes()

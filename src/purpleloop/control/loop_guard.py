@@ -18,15 +18,18 @@ one rejected before it was even typed, by the operation name it gave.
 **What "state" is.** The kernel cannot see the target's database, and the fixture's own state
 hash exists only at the leg boundaries where the runner snapshots it, so neither can say whether
 the action just taken changed anything. What the kernel *does* hold, for every action, is the
-outcome it recorded: the status and the redacted result data of a completed action (the same
-bytes the ``RESULT`` event carries, without latency). The state digest is a chained digest over
-the **distinct** outcomes the kernel has observed in the current window; it advances only when
-an action produces an outcome the window has not seen. A completed write's outcome includes its
-fingerprint, so a different write always counts as a change and the same write repeated does
-not; a read counts as a change only when it returns something new. A denied, failed, or
-refused action changes nothing. The *action-state hash* is the digest of the fingerprint and
-the state digest before the action: the same action, asked for again, in a situation the
-kernel has observed nothing new about.
+outcome it recorded. For a completed read that is the status and the redacted result data
+(the same bytes the ``RESULT`` event carries, without latency); a read counts as a change only
+when it returns something new. For a completed write -- anything not ``read``, code execution
+included -- it is the write's own fingerprint and status, *not* the response: a different
+write is always a change, and the same write repeated never is, however the target words its
+acknowledgement. (The codelab fixture numbers every publication and job; binding a write's
+outcome to its response would let a counter make an endless repeat look like progress.) The
+state digest is a chained digest over the **distinct** outcomes the kernel has observed in the
+current window; it advances only when an action produces an outcome the window has not seen.
+A denied, failed, or refused action changes nothing. The *action-state hash* is the digest of
+the fingerprint and the state digest before the action: the same action, asked for again, in a
+situation the kernel has observed nothing new about.
 
 **Windows.** One window per stage. The runner's stages are a fixed sequence no action can
 change, and the paired design deliberately repeats the clean task (after a verified reset, and
@@ -106,14 +109,15 @@ def rejected_fingerprint(name: str) -> str:
 def outcome_digest(
     fingerprint: str, side_effect: SideEffectClass, status: str, data: dict[str, Any]
 ) -> str:
-    """What a completed action told the kernel. A write's outcome is bound to the write itself."""
-    return digest_data(
-        {
-            "write": fingerprint if side_effect != SideEffectClass.READ else None,
-            "status": status,
-            "data": data,
-        }
-    )
+    """What a completed action told the kernel about the target's state.
+
+    A read: its status and data. A write: which write it was and whether the target accepted it.
+    The write's response is deliberately left out, so a target that numbers its replies cannot
+    disguise a repeated write as progress.
+    """
+    if side_effect != SideEffectClass.READ:
+        return digest_data({"write": fingerprint, "status": status})
+    return digest_data({"read": None, "status": status, "data": data})
 
 
 def action_state_hash(fingerprint: str, state: str) -> str:

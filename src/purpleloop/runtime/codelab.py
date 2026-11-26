@@ -87,7 +87,14 @@ from purpleloop.schemas.phase1 import (
 from purpleloop.schemas.phase2 import OwnershipScope, Phase2Grants
 from purpleloop.schemas.phase3 import DecodingParameters, ModelPin, Phase3Grants
 from purpleloop.schemas.phase4 import Phase4Grants, RetentionRule
-from purpleloop.schemas.phase5 import ActionClass, Phase5Grants, RiskApproval, RunMode, ShadowReport
+from purpleloop.schemas.phase5 import (
+    ActionClass,
+    LoopGuardGrant,
+    Phase5Grants,
+    RiskApproval,
+    RunMode,
+    ShadowReport,
+)
 from purpleloop.scoring.phase1 import corpus_metrics
 from purpleloop.scoring.phase4 import risk_class_metrics
 
@@ -113,8 +120,12 @@ def codelab_manifest(
         ActionClass.WRITE,
         ActionClass.CODE_EXEC,
     ),
+    loop_guard: LoopGuardGrant | None = None,
 ) -> AuthorizationManifest:
-    """Manifest 1.5 for the codelab lane, signed. Offline: no model endpoint is authorized."""
+    """Manifest 1.5 for the codelab lane, signed. Offline: no model endpoint is authorized.
+
+    ``loop_guard`` arms the kernel's runaway-loop detector (ADR 0018); ``None`` leaves it off.
+    """
     current = now or datetime.now(UTC)
     pin = ModelPin(
         pin_id=OFFLINE_PIN,
@@ -163,6 +174,7 @@ def codelab_manifest(
             action_classes=frozenset(action_classes),
             run_mode=run_mode,
             risk_approvals=frozenset(risk_approvals),
+            loop_guard=loop_guard,
         ),
         assets=(
             AssetScope(
@@ -469,6 +481,7 @@ async def approve(
     approver_key_id: str = APPROVER_KEY_ID,
     now: datetime | None = None,
     ttl: timedelta = timedelta(hours=4),
+    loop_guard: LoopGuardGrant | None = None,
 ) -> CodelabApproval:
     """Shadow the codelab manifest, sign an approval of its exact delta, and admit it.
 
@@ -476,7 +489,7 @@ async def approve(
     result says so in ``approver_key_provenance``.
     """
     corpus = list(scenarios) if scenarios is not None else load_corpus()
-    requested = codelab_manifest(key, now=now)
+    requested = codelab_manifest(key, now=now, loop_guard=loop_guard)
     report, _ = await shadow_codelab(work_dir / "shadow", requested, key, corpus)
     provenance = "provided" if approver_key is not None else "ephemeral"
     signer = approver_key or Ed25519PrivateKey.generate()

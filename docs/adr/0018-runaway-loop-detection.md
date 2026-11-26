@@ -48,10 +48,14 @@ design (`snapshot`, `telemetry`), and teardown must still run after a trip.
   Refused steps hash their typed fields the same way, without `node_id` and `depends_on`.
   Rejected intents hash by the operation name they gave.
 - **State digest.** A digest chained over the *distinct* outcomes the kernel has recorded in the
-  current window. An outcome is the status and the redacted result data of a completed action:
-  the same bytes the `RESULT` event carries, minus latency. A completed write's outcome also
-  includes its fingerprint, so a different write is always a change and a repeated one is not.
-  A denied, failed, or refused action is no change.
+  current window. A completed read's outcome is its status and redacted result data: the same
+  bytes the `RESULT` event carries, minus latency. A completed write's outcome is its own
+  fingerprint and status, and not its response. Any non-`read` side effect counts as a write,
+  code execution included. So a different write is always a change and a repeated one never is,
+  however the target words its acknowledgement. The first draft bound a write's outcome to its
+  response. The codelab test caught that: the codelab fixture numbers every publication, and
+  that let `report.publish` ×4 pass as progress. A denied, failed, or refused action is no
+  change.
 - **Action-state hash** = H(fingerprint, state digest before the action).
 
 The kernel cannot see the target's database. The fixture's state hash exists only where the
@@ -61,8 +65,9 @@ which would move every pinned replay hash. The ledger's semantic hash changes wi
 appended, so it never shows "no change". The outcome the kernel itself recorded is the only
 per-action state signal it already holds. It is deterministic wherever the ledger is (pinned
 replays require that), and it costs one JCS digest per action. The cost of the choice is a false
-negative: a target that answers each repeat with fresh bytes, such as a timestamp, defeats both
-checks. Signed budgets and caps still bound such a run.
+negative for **reads**: a target that answers each repeated read with fresh bytes, such as a
+timestamp, defeats both checks. Writes are immune, because their outcome ignores the response.
+Signed budgets and caps still bound such a run.
 
 ### 3. Checks and windows
 
@@ -132,7 +137,7 @@ every action would count. Shadow never latches.
   The cost is one fingerprint and one outcome digest per action.
 - The thresholds are a signed engagement decision. The acceptance note recommends 3/8 for
   model-driven work: roughly 2× and 2.5× the measured peaks plus one. It is not a kernel default.
-- Not covered: a loop whose every repeat returns new bytes. A loop across stages, which the
+- Not covered: a loop of reads whose every repeat returns new bytes. A loop across stages, which the
   runner's fixed stage sequence rules out. A loop inside one adapter call, such as a browser
   page's own requests, which subresource authorization and budget charging cover. The chat
   lane's (Phase 1) `ToolIntent` validation failure, which still raises as before rather than
