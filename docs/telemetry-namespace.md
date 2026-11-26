@@ -37,7 +37,7 @@ kind cannot ship without its row. Do not edit the generated block by hand.
 
 <!-- BEGIN GENERATED: purpleloop telemetry-namespace -->
 
-Namespace version **1.0.0**, instrumentation scope `purpleloop.telemetry`.
+Namespace version **1.1.0**, instrumentation scope `purpleloop.telemetry`.
 
 ### Spans
 
@@ -63,6 +63,7 @@ Namespace version **1.0.0**, instrumentation scope `purpleloop.telemetry`.
 | `MODEL` | `model` | `purpleloop.event.model` |
 | `JUDGE` | `judge` | `purpleloop.event.judge` |
 | `PROPOSAL` | `proposal` | `purpleloop.event.proposal` |
+| `SHADOW_SUPPRESSED` | `shadow-suppressed` | `purpleloop.event.shadow_suppressed` |
 | *(any other value)* | `<kind>` | `purpleloop.event.<kind>` (lower-cased, `[a-z0-9_]` only) |
 
 ### Attributes

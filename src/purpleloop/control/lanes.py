@@ -148,7 +148,9 @@ AGENT_LANE = LaneContract(
     ),
     actors=phase3_tools.AGENT_ACTORS,
     cross_tenant_operations=phase3_tools.AGENT_CROSS_TENANT_OPERATIONS,
-    manifest_versions=frozenset({"1.3.0"}),
+    # 1.5 (WP5.1) is the agent lane plus Phase 4 and Phase 5 grants. A 1.5 manifest is admitted
+    # only through capability admission (control.approvals); 1.3 is unchanged.
+    manifest_versions=frozenset({"1.3.0", "1.5.0"}),
     scenario_versions=frozenset({"1.3.0"}),
     seed_arguments=_agent_seed_arguments,
     # A model call adds latency the API lane does not have; the constant is reported, never tuned

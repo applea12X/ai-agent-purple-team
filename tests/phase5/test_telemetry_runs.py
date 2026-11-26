@@ -42,6 +42,7 @@ from purpleloop.control.manifest import ManifestVerifier
 from purpleloop.reporting.bundle import inventory, verify_bundle
 from purpleloop.reporting.telemetry import (
     EXPORT_FAILED,
+    NAMESPACE_VERSION,
     RUN_SPAN,
     SPANS_DROPPED,
     STATUS_LEDGER,
@@ -447,7 +448,7 @@ def test_every_exported_string_comes_from_the_redacted_ledger(
     ledgers = {
         run.name: (run / "evidence.jsonl").read_text() for run in bundle.iterdir() if run.is_dir()
     }
-    constants = {"purpleloop", "ledger-projection", "1.0.0", "unstaged"}
+    constants = {"purpleloop", "ledger-projection", NAMESPACE_VERSION, "unstaged"}
     checked = 0
     for payload in read_export(export / "spans.jsonl"):
         for resource_spans in payload.get("resourceSpans", []):

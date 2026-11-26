@@ -119,22 +119,36 @@ def test_every_event_kind_maps_to_a_distinct_namespaced_span() -> None:
     assert set(SPAN_NAMES) == {kind.value for kind in EventKind}
     assert len(set(SPAN_NAMES.values())) == len(EventKind)
     for kind in EventKind:
-        assert SPAN_NAMES[kind.value] == f"{EVENT_SPAN_PREFIX}{kind.value}"
+        assert SPAN_NAMES[kind.value] == f"{EVENT_SPAN_PREFIX}{kind.value.replace('-', '_')}"
         assert event_span_name(kind) == SPAN_NAMES[kind.value]
     assert RUN_SPAN not in SPAN_NAMES.values() and STAGE_SPAN not in SPAN_NAMES.values()
 
 
 def test_an_unknown_future_kind_maps_generically_and_projects(tmp_path: Path) -> None:
-    """WP5.1 adds an event kind; telemetry must map it without a code change."""
-    assert event_span_name("shadow_suppressed") == "purpleloop.event.shadow_suppressed"
+    """A kind added after this module was written must map without a code change."""
+    assert event_span_name("some-future-kind") == "purpleloop.event.some_future_kind"
     assert event_span_name("Weird Kind!") == "purpleloop.event.weird_kind"
     assert event_span_name("") == "purpleloop.event.unknown"
-    future = event(0).model_copy(update={"kind": "shadow_suppressed"})
+    future = event(0).model_copy(update={"kind": "some-future-kind"})
     projector = RunProjector()
     spans = projector.feed(future) + projector.finish()
     names = [span["name"] for span in spans]
-    assert "purpleloop.event.shadow_suppressed" in names
-    assert span_attributes(spans[0])["purpleloop.event.kind"] == "shadow_suppressed"
+    assert "purpleloop.event.some_future_kind" in names
+    assert span_attributes(spans[0])["purpleloop.event.kind"] == "some-future-kind"
+
+
+def test_the_wp51_shadow_suppressed_kind_projects(tmp_path: Path) -> None:
+    """WP5.1's SHADOW_SUPPRESSED arrived after this module; the generic rule covers it."""
+    from purpleloop.schemas.event import SHADOW_EVENT_SCHEMA
+
+    shadow = event(0, kind=EventKind.SHADOW_SUPPRESSED, stage="attack", decision="allow")
+    shadow = shadow.model_copy(update={"schema_version": SHADOW_EVENT_SCHEMA})
+    written = write_ledger(tmp_path / "evidence.jsonl", [shadow])
+    spans = project_events(written).spans
+    assert spans[0]["name"] == "purpleloop.event.shadow_suppressed"
+    assert SPAN_NAMES["shadow-suppressed"] == "purpleloop.event.shadow_suppressed"
+    assert span_attributes(spans[0])["purpleloop.event.kind"] == "shadow-suppressed"
+    assert span_attributes(spans[0])["purpleloop.event.schema_version"] == SHADOW_EVENT_SCHEMA
 
 
 def test_the_namespace_document_matches_the_enum() -> None:

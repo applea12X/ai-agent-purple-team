@@ -114,6 +114,11 @@ CAPABILITY_INCREASES: tuple[CapabilityIncrease, ...] = tuple(CapabilityIncrease)
 # --- manifest 1.5 ------------------------------------------------------------------------------
 
 RunMode = Literal["execute", "shadow"]
+#: Where adaptive-attacker proposals come from, in increasing order of autonomy (WP5.1). Absent
+#: in a manifest means ``bounded-search``: the deterministic mutation search of Phase 3, which
+#: is the v1 surface. ``model-driven`` is the optional profile ``control.attacker`` promised.
+ProposalSource = Literal["bounded-search", "model-driven"]
+PROPOSAL_SOURCE_ORDER: tuple[ProposalSource, ...] = ("bounded-search", "model-driven")
 
 
 class Phase5Grants(StrictModel):
@@ -133,6 +138,9 @@ class Phase5Grants(StrictModel):
     matrix_scope: str | None = Field(default=None, pattern=DIGEST_PATTERN)
     #: The collector asset id; it must be one of the manifest's signed assets.
     telemetry: str | None = None
+    #: The attacker's proposal source (WP5.1). ``None`` is ``bounded-search``; the field defaults
+    #: to ``None`` so every 1.5 document written before it existed keeps its canonical bytes.
+    proposal_source: ProposalSource | None = None
 
     @field_validator("risk_approvals")
     @classmethod

@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 
 #: The version of the ``purpleloop.*`` span, attribute, and metric namespace. A rename, removal,
 #: or change of meaning is a major bump; an added attribute is a minor bump.
-NAMESPACE_VERSION = "1.0.0"
+NAMESPACE_VERSION = "1.1.0"
 SCOPE_NAME = "purpleloop.telemetry"
 SERVICE_NAME = "purpleloop"
 #: Where every attribute value comes from. Resource attribute, so a collector can tell a

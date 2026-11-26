@@ -28,6 +28,7 @@ from purpleloop.adapters.offline_model import OfflineModelStore
 from purpleloop.adapters.phase1 import AdapterRegistry, ChatAdapter, HttpAdapter, ToolAdapter
 from purpleloop.adapters.scripted_model import ScriptedAgentModel
 from purpleloop.control import phase2_tools, phase3_tools
+from purpleloop.control.approvals import ApprovalAdmission
 from purpleloop.control.budgets import BudgetLedger
 from purpleloop.control.credentials import InMemoryCredentialBroker
 from purpleloop.control.kill_switch import KillSwitch
@@ -311,6 +312,7 @@ def build_supportlab_runner(
     lane: LaneContract = SUPPORTLAB_LANE,
     model_provider: Provider | None = None,
     model_pin_id: str = OFFLINE_PIN,
+    admission: ApprovalAdmission | None = None,
     **runner_options: Any,
 ) -> PurpleTeamRunner:
     transports = fixture.transports
@@ -388,6 +390,7 @@ def build_supportlab_runner(
         ),
         adapter=registry,
         ledger=EvidenceLedger(output_dir / "evidence.jsonl"),
+        admission=admission,
     )
     return PurpleTeamRunner(
         runtime, close=fixture.close, lane=lane, browser=browser, **runner_options

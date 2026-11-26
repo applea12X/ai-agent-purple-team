@@ -122,3 +122,22 @@ All are unchanged.
 - Key separation compares key ids, not key material, and two key ids held by one author are
   still one author. Acceptance notes must say who held which key.
 - `RiskApproval.covers` is exact set equality. Combining several approvals is WP5.1's decision.
+
+## WP5.1 additions (ADR 0014)
+
+The section above describes the contracts as they landed; WP5.1 closed the items it names.
+
+- `Phase5Grants.proposal_source` (`bounded-search` | `model-driven`, default `None` meaning
+  `bounded-search`). It defaults to `None`, so the 1.5 reference digest is unchanged.
+- `EventKind.SHADOW_SUPPRESSED`, written at event schema `1.2.0` (`SHADOW_EVENT_SCHEMA`).
+- `schemas/capability.py`: `CapabilitySurface`, `TargetSurface`, and the signed
+  `CapabilityBaseline` (Ed25519/JCS via `control.phase5_signing.sign_record`). It is not in
+  `CONTRACT_VERSIONS` and has no schema-drift reference digest yet.
+- `AGENT_LANE.manifest_versions` is `{1.3.0, 1.5.0}`. Scenario versions are unchanged.
+- Combining approvals: **exactly one** approval must cover a non-empty delta
+  (`APPROVAL_AMBIGUOUS` otherwise).
+- Admission adds these reason codes to the ones listed above: `NO_CAPABILITY_INCREASE`,
+  `SHADOW_ADMITTED`, `CAPABILITY_INCREASE_APPROVED` (admitted); `CAPABILITY_INCREASE_UNAPPROVED`,
+  `APPROVAL_AMBIGUOUS`, `APPROVAL_NOT_FOUND`, `APPROVAL_SHADOW_REPORT_MISSING`,
+  `APPROVAL_BASELINE_MISMATCH`, `APPROVAL_SHADOW_NOT_THIS_SURFACE`, `APPROVAL_DELTA_MISMATCH`,
+  `APPROVAL_ADMISSION_UNCONFIGURED`, `BASELINE_<signing reason>` (refused).
