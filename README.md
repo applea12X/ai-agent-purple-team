@@ -252,6 +252,18 @@ with the trust model stated at exactly its real strength. **No number produced o
 offline stand-in is presented as evidence about a real model**; the acceptance record says
 which runs have actually happened.
 
+## Phase 5 governance: shadow mode and risk approval
+
+Before the harness may do more than v1 did, it must first do it in **shadow**: the kernel
+admits, compiles, evaluates policy, and reserves budget for every action, then records it as
+suppressed and dispatches nothing. A pure `capability_delta` compares a manifest 1.5 against the
+signed v1 capability baseline; a non-empty delta is admitted in `execute` mode only under one
+signed `RiskApproval` naming exactly that delta and a shadow report of the same surface
+([ADR 0014](docs/adr/0014-shadow-mode-and-risk-approval.md),
+[WP5.1](docs/phase5/wp5.1-acceptance.md)). The sequence is `purpleloop shadow-run` →
+`purpleloop approve` → `purpleloop approval-check`. The committed baseline was signed with an
+ephemeral key, and in this single-author project separate keys are not separate people.
+
 ## Documentation
 
 - [Product requirements and delivery plan](planning/PRD.md) and the

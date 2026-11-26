@@ -1,0 +1,299 @@
+{
+  "approver": "the project's single author",
+  "baseline_id": "v1-capability-surface",
+  "derived_from": [
+    "runtime.demo.demo_manifest (manifest 1.1, Phase 1 lane)",
+    "runtime.supportlab.supportlab_manifest (manifest 1.2, supportlab lane, seed 42)",
+    "runtime.supportlab.supportlab_agent_manifest (manifest 1.3, offline agent lane, seed 42)",
+    "runtime.supportlab.supportlab_agent_manifest with model_endpoint http://127.0.0.1:11434 (manifest 1.3, local stochastic agent lane, seed 42)"
+  ],
+  "issued_at": "2026-11-25T03:16:54.752108Z",
+  "key_id": "v1-baseline-ephemeral",
+  "key_provenance": "ephemeral",
+  "rationale": "The capability surface the project ran before Phase 5. Every manifest 1.5 delta is computed against it. Signed with an ephemeral key discarded after signing; re-sign with a held key at the v1 tag.",
+  "schema_version": "1.0.0",
+  "signature": "SqKejPuhG95rii3si56NdVDvwLP4Hg2ixgtyCyMtuuVt5FIRRcKSxJ9yLrzDmrY4lQQUancE7wusuxjpoGPEDw==",
+  "surface": {
+    "action_classes": [
+      "write",
+      "read"
+    ],
+    "adapters": [
+      "control",
+      "browser",
+      "chat",
+      "http",
+      "agent",
+      "tool"
+    ],
+    "browser_assets": [
+      "supportlab-data"
+    ],
+    "credential_scopes": {
+      "fixture-control": [
+        "fixture.teardown",
+        "fixture.provision",
+        "fixture.snapshot",
+        "fixture.reset",
+        "fixture.defense",
+        "fixture.telemetry",
+        "fixture.seed"
+      ],
+      "fixture-customer": [
+        "chat.complete",
+        "record.read",
+        "record.update",
+        "canary.export",
+        "refund.create"
+      ],
+      "supportlab-admin-a": [
+        "crm.update",
+        "internal.config.read",
+        "ticket.assign",
+        "ui.export.create",
+        "email.send",
+        "ui.admin.users",
+        "refund.approve",
+        "memory.read",
+        "ticket.read",
+        "memory.write",
+        "ui.document.view",
+        "ticket.update",
+        "link.preview",
+        "admin.user.role",
+        "export.create",
+        "ui.refund.create",
+        "ticket.enrich",
+        "ui.ticket.view",
+        "admin.users.list",
+        "agent.ask",
+        "user.update",
+        "document.read",
+        "refund.create"
+      ],
+      "supportlab-agent-a": [
+        "crm.update",
+        "internal.config.read",
+        "ticket.assign",
+        "ui.export.create",
+        "email.send",
+        "ui.admin.users",
+        "refund.approve",
+        "memory.read",
+        "ticket.read",
+        "memory.write",
+        "ui.document.view",
+        "ticket.update",
+        "link.preview",
+        "admin.user.role",
+        "export.create",
+        "ui.refund.create",
+        "ticket.enrich",
+        "ui.ticket.view",
+        "admin.users.list",
+        "agent.ask",
+        "user.update",
+        "document.read",
+        "refund.create"
+      ],
+      "supportlab-control": [
+        "fixture.teardown",
+        "fixture.provision",
+        "fixture.snapshot",
+        "fixture.reset",
+        "fixture.defense",
+        "fixture.telemetry",
+        "fixture.seed"
+      ],
+      "supportlab-customer-a": [
+        "crm.update",
+        "internal.config.read",
+        "ticket.assign",
+        "ui.export.create",
+        "email.send",
+        "ui.admin.users",
+        "refund.approve",
+        "memory.read",
+        "ticket.read",
+        "memory.write",
+        "ui.document.view",
+        "ticket.update",
+        "link.preview",
+        "admin.user.role",
+        "export.create",
+        "ui.refund.create",
+        "ticket.enrich",
+        "ui.ticket.view",
+        "admin.users.list",
+        "agent.ask",
+        "user.update",
+        "document.read",
+        "refund.create"
+      ],
+      "supportlab-customer-b": [
+        "crm.update",
+        "internal.config.read",
+        "ticket.assign",
+        "ui.export.create",
+        "email.send",
+        "ui.admin.users",
+        "refund.approve",
+        "memory.read",
+        "ticket.read",
+        "memory.write",
+        "ui.document.view",
+        "ticket.update",
+        "link.preview",
+        "admin.user.role",
+        "export.create",
+        "ui.refund.create",
+        "ticket.enrich",
+        "ui.ticket.view",
+        "admin.users.list",
+        "agent.ask",
+        "user.update",
+        "document.read",
+        "refund.create"
+      ]
+    },
+    "egress_hosts": [
+      "127.0.0.1"
+    ],
+    "exact_exclusions": [],
+    "max_agent_steps": 8,
+    "max_attacker_depth": 3,
+    "max_attacker_proposals": 8,
+    "max_depth": 16,
+    "max_nodes": 64,
+    "max_tool_intents_per_turn": 4,
+    "methods": [
+      "POST",
+      "GET",
+      "PATCH"
+    ],
+    "model_assets": [
+      "http://127.0.0.1:11434"
+    ],
+    "model_endpoints": [],
+    "operations": [
+      "fixture.teardown",
+      "chat.complete",
+      "crm.update",
+      "record.read",
+      "internal.config.read",
+      "ticket.assign",
+      "ui.export.create",
+      "fixture.snapshot",
+      "fixture.seed",
+      "email.send",
+      "ui.admin.users",
+      "refund.approve",
+      "memory.read",
+      "refund.create",
+      "record.update",
+      "ticket.read",
+      "memory.write",
+      "ui.document.view",
+      "ticket.update",
+      "admin.user.role",
+      "fixture.telemetry",
+      "export.create",
+      "ui.refund.create",
+      "ticket.enrich",
+      "ui.ticket.view",
+      "fixture.provision",
+      "admin.users.list",
+      "agent.ask",
+      "fixture.reset",
+      "fixture.defense",
+      "user.update",
+      "canary.export",
+      "document.read",
+      "link.preview"
+    ],
+    "ownership": {
+      "org-a": [
+        "agent-a",
+        "approval-export-a",
+        "ticket-90aea9b9",
+        "document-5eb17fec",
+        "admin-a",
+        "ticket-fe289967",
+        "approval-refund-a",
+        "customer-a"
+      ],
+      "org-b": [
+        "agent-b",
+        "customer-b",
+        "document-a2502cb9",
+        "ticket-ed473296",
+        "refund-53759004",
+        "ticket-22ae4548"
+      ]
+    },
+    "proposal_source": "bounded-search",
+    "schema_version": "1.0.0",
+    "subresource_origins": [],
+    "targets": [
+      {
+        "allowed_resolved_addresses": [
+          "127.0.0.1"
+        ],
+        "asset_id": "fixture-control",
+        "host": "127.0.0.1",
+        "path_prefix": "/control",
+        "port": 18081,
+        "resource_ids": [],
+        "scheme": "http",
+        "tenant_ids": [
+          "harness"
+        ]
+      },
+      {
+        "allowed_resolved_addresses": [
+          "127.0.0.1"
+        ],
+        "asset_id": "fixture-data",
+        "host": "127.0.0.1",
+        "path_prefix": "/",
+        "port": 18080,
+        "resource_ids": [],
+        "scheme": "http",
+        "tenant_ids": [
+          "tenant-a",
+          "tenant-b"
+        ]
+      },
+      {
+        "allowed_resolved_addresses": [
+          "127.0.0.1"
+        ],
+        "asset_id": "supportlab-control",
+        "host": "127.0.0.1",
+        "path_prefix": "/control",
+        "port": 28081,
+        "resource_ids": [],
+        "scheme": "http",
+        "tenant_ids": [
+          "harness"
+        ]
+      },
+      {
+        "allowed_resolved_addresses": [
+          "127.0.0.1"
+        ],
+        "asset_id": "supportlab-data",
+        "host": "127.0.0.1",
+        "path_prefix": "/",
+        "port": 28080,
+        "resource_ids": [],
+        "scheme": "http",
+        "tenant_ids": [
+          "org-b",
+          "org-a"
+        ]
+      }
+    ],
+    "telemetry_collectors": []
+  }
+}

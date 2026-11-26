@@ -1,0 +1,364 @@
+{
+  "allowed_adapters": [
+    "agent",
+    "browser",
+    "tool",
+    "http",
+    "control",
+    "chat"
+  ],
+  "allowed_methods": [
+    "POST",
+    "GET",
+    "PATCH"
+  ],
+  "allowed_operations": [
+    "fixture.defense",
+    "refund.approve",
+    "crm.update",
+    "ui.export.create",
+    "link.preview",
+    "ui.admin.users",
+    "ticket.enrich",
+    "fixture.seed",
+    "fixture.reset",
+    "refund.create",
+    "memory.write",
+    "ticket.update",
+    "fixture.telemetry",
+    "document.read",
+    "admin.user.role",
+    "fixture.provision",
+    "internal.config.read",
+    "admin.users.list",
+    "export.create",
+    "ui.document.view",
+    "email.send",
+    "agent.ask",
+    "ui.refund.create",
+    "memory.read",
+    "fixture.teardown",
+    "ticket.read",
+    "fixture.snapshot",
+    "ui.ticket.view",
+    "ticket.assign",
+    "user.update"
+  ],
+  "allowed_side_effects": [
+    "write",
+    "read"
+  ],
+  "approvers": [
+    "local-demo-operator"
+  ],
+  "assets": [
+    {
+      "allowed_resolved_addresses": [
+        "127.0.0.1"
+      ],
+      "asset_id": "supportlab-data",
+      "host": "127.0.0.1",
+      "path_prefix": "/",
+      "port": 28080,
+      "resource_ids": [],
+      "scheme": "http",
+      "tenant_ids": [
+        "org-b",
+        "org-a"
+      ]
+    },
+    {
+      "allowed_resolved_addresses": [
+        "127.0.0.1"
+      ],
+      "asset_id": "supportlab-control",
+      "host": "127.0.0.1",
+      "path_prefix": "/control",
+      "port": 28081,
+      "resource_ids": [],
+      "scheme": "http",
+      "tenant_ids": [
+        "harness"
+      ]
+    }
+  ],
+  "budgets": {
+    "concurrency": 1,
+    "cost_microusd": 1000000,
+    "records": 600,
+    "requests": 600,
+    "retries": 0,
+    "tokens": 200000,
+    "wall_time_seconds": 120.0,
+    "writes": 64
+  },
+  "cleanup_procedure": "fixture-reset",
+  "credential_handles": [
+    "supportlab-agent-a",
+    "supportlab-customer-a",
+    "supportlab-admin-a",
+    "supportlab-customer-b",
+    "supportlab-control"
+  ],
+  "credential_scopes": {
+    "supportlab-admin-a": [
+      "refund.approve",
+      "crm.update",
+      "ui.export.create",
+      "link.preview",
+      "ui.admin.users",
+      "ticket.enrich",
+      "memory.write",
+      "ticket.update",
+      "document.read",
+      "admin.user.role",
+      "user.update",
+      "internal.config.read",
+      "admin.users.list",
+      "export.create",
+      "ui.document.view",
+      "email.send",
+      "agent.ask",
+      "ui.refund.create",
+      "memory.read",
+      "ticket.read",
+      "ui.ticket.view",
+      "ticket.assign",
+      "refund.create"
+    ],
+    "supportlab-agent-a": [
+      "refund.approve",
+      "crm.update",
+      "ui.export.create",
+      "link.preview",
+      "ui.admin.users",
+      "ticket.enrich",
+      "memory.write",
+      "ticket.update",
+      "document.read",
+      "admin.user.role",
+      "user.update",
+      "internal.config.read",
+      "admin.users.list",
+      "export.create",
+      "ui.document.view",
+      "email.send",
+      "agent.ask",
+      "ui.refund.create",
+      "memory.read",
+      "ticket.read",
+      "ui.ticket.view",
+      "ticket.assign",
+      "refund.create"
+    ],
+    "supportlab-control": [
+      "fixture.provision",
+      "fixture.defense",
+      "fixture.teardown",
+      "fixture.seed",
+      "fixture.snapshot",
+      "fixture.reset",
+      "fixture.telemetry"
+    ],
+    "supportlab-customer-a": [
+      "refund.approve",
+      "crm.update",
+      "ui.export.create",
+      "link.preview",
+      "ui.admin.users",
+      "ticket.enrich",
+      "memory.write",
+      "ticket.update",
+      "document.read",
+      "admin.user.role",
+      "user.update",
+      "internal.config.read",
+      "admin.users.list",
+      "export.create",
+      "ui.document.view",
+      "email.send",
+      "agent.ask",
+      "ui.refund.create",
+      "memory.read",
+      "ticket.read",
+      "ui.ticket.view",
+      "ticket.assign",
+      "refund.create"
+    ],
+    "supportlab-customer-b": [
+      "refund.approve",
+      "crm.update",
+      "ui.export.create",
+      "link.preview",
+      "ui.admin.users",
+      "ticket.enrich",
+      "memory.write",
+      "ticket.update",
+      "document.read",
+      "admin.user.role",
+      "user.update",
+      "internal.config.read",
+      "admin.users.list",
+      "export.create",
+      "ui.document.view",
+      "email.send",
+      "agent.ask",
+      "ui.refund.create",
+      "memory.read",
+      "ticket.read",
+      "ui.ticket.view",
+      "ticket.assign",
+      "refund.create"
+    ]
+  },
+  "data_classification": "synthetic",
+  "denied_operations": [],
+  "egress_hosts": [
+    "127.0.0.1"
+  ],
+  "engagement_id": "purpleloop-nightly",
+  "exact_exclusions": [],
+  "issued_at": "2026-11-25T03:17:58Z",
+  "key_id": "nightly-scope",
+  "model_endpoints": [],
+  "owner": "fixture-owner",
+  "phase1": {
+    "defense_profiles": [
+      "workflow-approval",
+      "debug-endpoints-disabled",
+      "retrieval-provenance-guard",
+      "property-allowlist",
+      "memory-write-guard",
+      "output-sanitization",
+      "object-ownership",
+      "prompt-isolation",
+      "function-authorization",
+      "upstream-validation",
+      "capability-scoping",
+      "upstream-allowlist",
+      "schema-validation"
+    ],
+    "max_depth": 16,
+    "max_nodes": 64
+  },
+  "phase2": {
+    "browser_assets": [
+      "supportlab-data"
+    ],
+    "containment_prefix": "purpleloop-supportlab",
+    "database_credential_handle": "supportlab-database",
+    "max_browser_contexts": 32,
+    "ownership": [
+      {
+        "resource_ids": [
+          "ticket-fe289967",
+          "ticket-90aea9b9",
+          "approval-refund-a",
+          "approval-export-a",
+          "agent-a",
+          "customer-a",
+          "document-5eb17fec",
+          "admin-a"
+        ],
+        "tenant_id": "org-a"
+      },
+      {
+        "resource_ids": [
+          "document-a2502cb9",
+          "ticket-22ae4548",
+          "ticket-ed473296",
+          "agent-b",
+          "customer-b",
+          "refund-53759004"
+        ],
+        "tenant_id": "org-b"
+      }
+    ],
+    "ownership_seed": 42,
+    "subresource_origins": []
+  },
+  "phase3": {
+    "cost_microusd_budget": 1000000,
+    "judge_enabled": false,
+    "judge_model_pin": null,
+    "max_agent_steps": 8,
+    "max_attacker_depth": 3,
+    "max_attacker_proposals": 8,
+    "max_tool_intents_per_turn": 4,
+    "min_repetitions": 5,
+    "model_assets": [],
+    "model_credential_handle": "supportlab-model",
+    "model_pins": [
+      {
+        "decoding": {
+          "max_output_tokens": 512,
+          "seed": 42,
+          "temperature": 0.0,
+          "top_p": 1.0
+        },
+        "expected_input_tokens_per_call": 418,
+        "expected_output_tokens_per_call": 27,
+        "model_id": "supportlab-scripted",
+        "model_version": "scripted-v1",
+        "pin_id": "offline-scripted",
+        "price_input_microusd_per_1k": 0,
+        "price_output_microusd_per_1k": 0,
+        "provider": "offline",
+        "system_prompt_hash": "41671086ac9dc32f875f5564e36b9278c9758eae8f29c9e9aaf934243e8d9e71"
+      }
+    ],
+    "token_budget": 200000
+  },
+  "phase4": {
+    "attestation_key_ids": [
+      "ci-release"
+    ],
+    "nightly_scope": {
+      "repetitions": 5,
+      "rotation": "Fixed subset: the Phase 4 nightly agent scenario plus one shared API/browser workflow pair. Sizing the agent subset is WP5.0.2.",
+      "scenario_ids": [
+        "agent-indirect-ticket",
+        "bola-ticket-ui",
+        "bola-ticket"
+      ]
+    },
+    "retention": [
+      {
+        "artifact_kind": "raw-ledgers",
+        "days": 0,
+        "rationale": "every finding links into it"
+      },
+      {
+        "artifact_kind": "attestations",
+        "days": 0,
+        "rationale": "provenance of a bundle"
+      },
+      {
+        "artifact_kind": "bundles",
+        "days": 90,
+        "rationale": "per-run CI bundles are reproducible from pinned code and seed"
+      },
+      {
+        "artifact_kind": "browser-artifacts",
+        "days": 90,
+        "rationale": "debugging aids, never scored"
+      },
+      {
+        "artifact_kind": "model-transcripts",
+        "days": 30,
+        "rationale": "bulkiest and provider-sensitive; digests stay in the ledger"
+      }
+    ]
+  },
+  "phase5": null,
+  "redaction_required": true,
+  "required_evidence": [],
+  "retention_days": 7,
+  "schema_version": "1.4.0",
+  "signature": "GVKSECNhuBWiNpZf+D5Jan0SwoC74LiBEIMrCmee69VuxDfZdyDjKJyqzeW3EU6GLsEx/BsxasveiOaggMbRAA==",
+  "stop_conditions": [],
+  "stop_on_error": true,
+  "synthetic_secrets": [],
+  "valid_from": "2026-11-25T03:17:58Z",
+  "valid_until": "2027-11-25T03:17:58Z"
+}
