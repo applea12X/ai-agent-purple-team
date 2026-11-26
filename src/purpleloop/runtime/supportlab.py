@@ -28,6 +28,7 @@ from purpleloop.adapters.offline_model import OfflineModelStore
 from purpleloop.adapters.phase1 import AdapterRegistry, ChatAdapter, HttpAdapter, ToolAdapter
 from purpleloop.adapters.scripted_model import ScriptedAgentModel
 from purpleloop.control import phase2_tools, phase3_tools
+from purpleloop.control.approvals import ApprovalAdmission
 from purpleloop.control.budgets import BudgetLedger
 from purpleloop.control.credentials import InMemoryCredentialBroker
 from purpleloop.control.kill_switch import KillSwitch
@@ -312,6 +313,7 @@ def build_supportlab_runner(
     model_provider: Provider | None = None,
     model_pin_id: str = OFFLINE_PIN,
     model_timeout_seconds: float | None = None,
+    admission: ApprovalAdmission | None = None,
     **runner_options: Any,
 ) -> PurpleTeamRunner:
     """``model_timeout_seconds``, when given, replaces the per-call model timeout and the agent
@@ -398,6 +400,7 @@ def build_supportlab_runner(
         ),
         adapter=registry,
         ledger=EvidenceLedger(output_dir / "evidence.jsonl"),
+        admission=admission,
     )
     return PurpleTeamRunner(
         runtime, close=fixture.close, lane=lane, browser=browser, **runner_options

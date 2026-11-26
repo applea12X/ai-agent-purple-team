@@ -140,3 +140,15 @@ review-check:
 benchmark-subset:
 	uv run purpleloop benchmark-promote
 	uv run purpleloop benchmark-run --output-dir artifacts/benchmark
+
+# WP5.1 governance lane (phase5.yml job `governance`): shadow mode, capability delta, admission.
+.PHONY: governance-check shadow-run
+governance-check:
+	uv run pytest --no-cov tests/phase5/test_capability_delta.py \
+		tests/phase5/test_approval_admission.py tests/phase5/test_shadow_mode.py \
+		tests/phase5/test_model_driven_attacker.py tests/phase5/test_governance_cli.py \
+		tests/phase5/test_capability_baseline.py tests/phase5/test_risk_class_scenarios_removed.py
+	uv run purpleloop capability-baseline --check
+
+shadow-run:
+	uv run purpleloop shadow-run artifacts/shadow

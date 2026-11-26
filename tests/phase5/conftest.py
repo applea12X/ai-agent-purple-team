@@ -307,3 +307,232 @@ def reviewer_key_file(tmp_path: Path) -> tuple[Path, Path]:
     keys.mkdir()
     generate_reviewer_key(keys / "reviewer.pem", keys / "reviewer-public.pem")
     return keys / "reviewer.pem", keys / "reviewer-public.pem"
+
+
+# --- WP5.1 governance: shadow runs, the approved baseline, risk approvals ----------------------
+#
+# Every key here is generated in memory for one test and never written anywhere. The baseline is
+# signed fresh per test from the v1 lane manifests, exactly as the committed one was, so a test
+# can also sign a deliberately wrong one.
+
+APPROVER_KEY_ID = "approver-ephemeral"
+
+
+class Counts(dict[str, int]):
+    def __missing__(self, key: str) -> int:
+        return 0
+
+
+class CountingTransport(httpx.AsyncBaseTransport):
+    """Counts every request that reaches the in-process fixture. A shadow run leaves it at 0."""
+
+    def __init__(self, inner: httpx.AsyncBaseTransport, counts: Counts) -> None:
+        self.inner, self.counts = inner, counts
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.counts["fixture-requests"] += 1
+        return await self.inner.handle_async_request(request)
+
+
+class CountingModel:
+    """Wraps the scripted target model; counts every completion. A shadow run leaves it at 0."""
+
+    def __init__(self, counts: Counts) -> None:
+        from purpleloop.adapters.scripted_model import ScriptedAgentModel
+
+        self.inner, self.counts = ScriptedAgentModel(), counts
+        self.profile = self.inner.profile
+
+    @property
+    def endpoint(self) -> str | None:
+        return None
+
+    async def complete(self, **kwargs: Any) -> tuple[str, int, int]:
+        self.counts["model-calls"] += 1
+        return await self.inner.complete(**kwargs)
+
+
+def agent_scenarios() -> list[Any]:
+    from purpleloop.schemas.phase1 import load_scenario, scenario_paths
+
+    return [load_scenario(path) for path in scenario_paths(agent_cli.SCENARIOS)]
+
+
+@dataclass
+class Governance:
+    """Builders for the WP5.1 tests: manifests, shadow runs, approvals, execute runs."""
+
+    manifest_key: Ed25519PrivateKey
+    approver_key: Ed25519PrivateKey
+    baseline: Any
+    baseline_keys: dict[str, Any]
+    counts: Counts = field(default_factory=Counts)
+    approver_key_id: str = APPROVER_KEY_ID
+
+    def manifest(self, **kwargs: Any) -> AuthorizationManifest:
+        from purpleloop.runtime.governance import agent_manifest_15
+
+        return agent_manifest_15(self.manifest_key, **kwargs)
+
+    def sign(self, manifest: AuthorizationManifest) -> AuthorizationManifest:
+        from purpleloop.control.manifest import sign_manifest
+
+        return sign_manifest(
+            AuthorizationManifest.model_validate(manifest.model_dump()), self.manifest_key
+        )
+
+    def verifier(self) -> Any:
+        from purpleloop.control.manifest import ManifestVerifier
+        from purpleloop.runtime.supportlab import KEY_ID
+
+        return ManifestVerifier({KEY_ID: self.manifest_key.public_key()})
+
+    def admission(self, approvals: Any = (), reports: Any = (), approver_keys: Any = None) -> Any:
+        from purpleloop.control.approvals import ApprovalAdmission
+
+        return ApprovalAdmission.of(
+            self.baseline,
+            self.baseline_keys,
+            approver_keys=(
+                approver_keys
+                if approver_keys is not None
+                else {self.approver_key_id: self.approver_key.public_key()}
+            ),
+            approvals=approvals,
+            shadow_reports=reports,
+        )
+
+    def agent_runner(
+        self, manifest: AuthorizationManifest, directory: Path, admission: Any, **options: Any
+    ) -> Any:
+        from purpleloop.runtime.supportlab import (
+            InProcessSupportlab,
+            actor_credentials,
+            build_agent_runner,
+        )
+
+        tokens = actor_credentials()
+        control = actor_credentials()["customer-a"]
+        fixture = InProcessSupportlab(tokens, control)
+        fixture.transports = {
+            port: CountingTransport(transport, self.counts)  # type: ignore[misc]
+            for port, transport in fixture.transports.items()
+        }
+        return build_agent_runner(
+            directory,
+            manifest,
+            self.verifier(),
+            actor_tokens=tokens,
+            control=control,
+            fixture=fixture,
+            admission=admission,
+            model_provider=CountingModel(self.counts),
+            **options,
+        )
+
+    def runtime_factory(self, manifest: AuthorizationManifest, admission: Any) -> Any:
+        return lambda directory: self.agent_runner(manifest, directory, admission).runtime
+
+    def attacker(self, source: str = "bounded-search", **overrides: Any) -> Any:
+        from purpleloop.control.attacker import BoundedAttacker, ModelDrivenAttacker
+        from purpleloop.control.phase3_tools import INTENT_OPERATIONS
+        from purpleloop.runtime.governance import ATTACKER_PIN
+
+        common: dict[str, Any] = {
+            "max_proposals": 8,
+            "max_depth": 3,
+            "operations": sorted(INTENT_OPERATIONS),
+            "own_tenant": "org-a",
+            "other_tenants": ("org-b",),
+            "resource_id": "admin-a",
+        }
+        common.update(overrides)
+        if source == "model-driven":
+            from purpleloop.adapters.scripted_attacker import ScriptedAttackerModel
+
+            model = common.pop("model", None) or ScriptedAttackerModel()
+            pin = common.pop("pin", ATTACKER_PIN)
+            return ModelDrivenAttacker(
+                model, pin, objective="change another tenant's records", **common
+            )
+        return BoundedAttacker(**common)
+
+    def twin(self, requested: AuthorizationManifest) -> AuthorizationManifest:
+        from purpleloop.control.approvals import shadow_twin
+
+        return self.sign(shadow_twin(requested))
+
+    def shadow(
+        self,
+        requested: AuthorizationManifest,
+        out: Path,
+        *,
+        scenarios: list[Any] | None = None,
+        attacker: Callable[[], Any] | None = None,
+        admission: Any = None,
+    ) -> tuple[Any, Any, AuthorizationManifest]:
+        import asyncio
+
+        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+        from purpleloop.control.lanes import AGENT_LANE
+        from purpleloop.runtime.shadow import ShadowRunner
+
+        twin = self.twin(requested)
+        runner = ShadowRunner(
+            self.runtime_factory(twin, admission or self.admission()),
+            lane=AGENT_LANE,
+            attacker_factory=attacker,
+        )
+        report = asyncio.run(
+            runner.run(
+                scenarios or agent_scenarios()[:2],
+                twin,
+                run_id="shadow-test",
+                output_dir=out,
+                public_key_pem=self.manifest_key.public_key().public_bytes(
+                    Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
+                ),
+                requested=requested,
+            )
+        )
+        return report, runner, twin
+
+    def approve(self, requested: AuthorizationManifest, report: Any, **overrides: Any) -> Any:
+        from purpleloop.control.approvals import grant_approval
+
+        options: dict[str, Any] = {
+            "approver_key_id": self.approver_key_id,
+            "approver": "a test approver holding an ephemeral key",
+            "rationale": "test approval",
+            "approval_id": "approval-test",
+        }
+        key = overrides.pop("key", self.approver_key)
+        baseline = overrides.pop("baseline", self.baseline)
+        options.update(overrides)
+        return grant_approval(requested, report, baseline, key, **options)
+
+    def approved(self, requested: AuthorizationManifest, *approvals: Any) -> AuthorizationManifest:
+        from purpleloop.control.approvals import with_approvals
+
+        return self.sign(with_approvals(requested, approvals))
+
+
+@pytest.fixture
+def counting_transport() -> type[CountingTransport]:
+    return CountingTransport
+
+
+@pytest.fixture
+def governance() -> Governance:
+    from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+    from purpleloop.runtime.governance import sign_v1_baseline
+
+    baseline, pem = sign_v1_baseline()
+    return Governance(
+        manifest_key=Ed25519PrivateKey.generate(),
+        approver_key=Ed25519PrivateKey.generate(),
+        baseline=baseline,
+        baseline_keys={baseline.key_id: load_pem_public_key(pem)},
+    )

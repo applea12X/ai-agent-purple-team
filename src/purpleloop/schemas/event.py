@@ -26,6 +26,15 @@ class EventKind(StrEnum):
     MODEL = "model"
     JUDGE = "judge"
     PROPOSAL = "proposal"
+    # Phase 5 (WP5.1). A would-be execution the kernel decided and did not dispatch, because the
+    # run is in shadow mode. Additive: no earlier event carries it, so no earlier digest moves.
+    # Events of this kind are written at event schema 1.2.0 (``SHADOW_EVENT_SCHEMA``).
+    SHADOW_SUPPRESSED = "shadow-suppressed"
+
+
+#: The evidence-event schema version of every shadow-mode event (WP5.1). 1.0 events carry no
+#: version and 1.1 events are the Phase 1-4 scenario events; both are unchanged.
+SHADOW_EVENT_SCHEMA = "1.2.0"
 
 
 class EvidenceEvent(StrictModel):
