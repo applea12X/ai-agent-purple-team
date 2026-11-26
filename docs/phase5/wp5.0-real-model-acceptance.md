@@ -369,3 +369,19 @@ as refusals. Zero out-of-scope executions: **met**.
   the parser's refusal path more than these runs did. `HostileModel` covers that offline
   (Phase 3).
 - **Not observed in CI.** All runs were local commands.
+
+## Quality gate
+
+`uv run ruff check . && uv run ruff format --check . && uv run mypy`: all passed (272 files
+formatted, 113 source files, at the post-merge tree).
+
+| Full suite (`uv run pytest --junitxml=…`) | Commit | Result | Coverage | Time |
+| --- | --- | --- | --- | --- |
+| Before merging the latest `phase-5` | `0047f05` + this note (uncommitted) | 887 collected: **884 passed, 3 skipped, 0 failed** | 91.67% | 1,191.24 s (pytest), 1,193.02 s real, AC power |
+| After merging `phase-5` at `8d26986` | `ffbdd71` | 1,082 collected: 1,077 passed, 4 skipped, **1 failed** | 92.09% | 1,252.34 s, on battery |
+| After the fix below | `5834cd5` | 1,082 collected: **1,078 passed, 4 skipped, 0 failed** (JUnit `tests=1082 failures=0 errors=0 skipped=4`) | **92.08%** (floor 85%) | 1,171.08 s (pytest), 1,172.81 s real, AC power |
+
+The one post-merge failure was a merge interaction. WP5.1's
+`test_no_private_key_is_committed_beside_it` read every entry of `baselines/` as text, and it
+raised `IsADirectoryError` on `baselines/model-calibration/`, which this package added. It now
+scans every file under `baselines/` recursively, the calibration file included (`5834cd5`).
