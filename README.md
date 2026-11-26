@@ -287,6 +287,19 @@ changes an outcome; the failure is recorded in a separate status ledger (ADR 001
 versioned in [the telemetry namespace](docs/telemetry-namespace.md). `uv run purpleloop analyze`
 turns verified bundles into Parquet and queries them with DuckDB, and refuses unverified ones.
 
+## Phase 5 codelab: a fixture that executes code (WP5.5)
+
+`codelab` is a second disposable target: a data-analysis assistant whose "run analysis snippet"
+tool executes code in a **sandbox container the fixture owns** (no network, read-only root plus
+one 16 MiB tmpfs, every capability dropped, `no-new-privileges`, default seccomp, pids/memory/CPU
+limits, a wall-time kill) — never in the fixture's process and never in the harness. Its lane
+admits only manifest 1.5, so every run needs a signed approval of its `code-exec` delta.
+`purpleloop codelab-run` runs the approval path and the 10-scenario corpus offline against a
+stub sandbox; `purpleloop codelab-escape` runs the containment-escape suite against the real
+container (hardened runc here; gVisor was not available). See
+[ADR 0015](docs/adr/0015-codelab-contained-code-execution.md) and
+[WP5.5](docs/phase5/wp5.5-acceptance.md).
+
 ## Documentation
 
 - [Product requirements and delivery plan](planning/PRD.md) and the
