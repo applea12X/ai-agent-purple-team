@@ -88,6 +88,19 @@ run's bundles; `judge-report --judge-endpoint` scores a real judge (`PURPLELOOP_
 frozen corpus — advisory only. A thinking model's leading `<think>` block is stripped before parsing
 and recorded by digest. `make agent-corpus-stochastic` and `make judge-report-networked` wrap these.
 
+**Evaluation matrix (Phase 5, WP5.2).** Models × defenses on the agent corpus, from a signed spec
+under `scenarios/matrix/`. `matrix-run` verifies the spec (and, for a spec with a real pin, the
+manifest 1.5 authorizing its digest), writes a pre-flight cost and wall-time estimate, and refuses
+before the first call when either is over the signed cap; `matrix-report` re-verifies a finished
+matrix and recomputes it from its trials. The headline is which defenses still hold when the model
+stops cooperating, per scenario — never a per-model score. Advisory; no gate reads it.
+
+```console
+make matrix-standins                    # 3 stand-ins x 25 scenarios x 9 columns x 5 reps, offline
+uv run purpleloop matrix-run scenarios/matrix/real-pins-subset.json \
+  --endpoint http://127.0.0.1:11434/v1 # real pins (local Ollama); see docs/phase5/wp5.2-acceptance.md
+```
+
 Phase 4 adds the CI quality system and release machinery: a fast cross-lane smoke demo, five
 enforcing gates, signed run attestations, a self-contained audit export, a held-out mutation
 set, and a regression registry mapping every accepted finding to its pinning test:
