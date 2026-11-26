@@ -2,10 +2,12 @@
 
 Date: November 25, 2026
 
-Measured on branch `worktree-agent-a5503ba061923ea25` (from `phase-5` = `8f000e0`, later merged with `phase-5` = `80db489`), on the same
+Measured on branch `worktree-agent-a5503ba061923ea25` (from `phase-5` = `8f000e0`, later merged with `phase-5` = `80db489` and then `8d26986`), on the same
 local macOS machine as WP5.0.1, with Docker Desktop running. Every number below comes from a
 command run in this session, and the command is written next to it. No model was called. Every
-run used the offline scripted provider and the in-process fixture.
+run used the offline scripted provider and the in-process fixture. The suite, collector, and
+analysis runs were measured at `7dcc75b`, before either merge. The test results section says
+which tree each run was on.
 
 ## What was built
 
@@ -56,7 +58,7 @@ event follows it at termination. The consequences, each asserted by a test below
 | Spans flowing to the collector | `time uv run purpleloop observe-suite --lane agent --collector-port 24318 --out artifacts/observability/collector-suite` | 25 of 25 passed, 2990 spans exported, 0 dropped; 32.3 s wall |
 | What the collector wrote | `read_export` on `artifacts/observability/collector/collector-spans.jsonl` | 75 OTLP lines, **2990 spans**, 25 metric payloads. The set of (traceId, spanId, parentSpanId, name, start, end) **equals** the bundle ledgers' `project_events` projection. The bundle verifies (`valid: True, scenarios: 25`). |
 | Live vs after-the-fact projection | `test_bundle_is_byte_identical_…`, `test_a_healthy_collector_receives_exactly_the_projection` | the exported spans (file and HTTP) equal `project_events` over the verified ledger, span for span |
-| Namespace drift | `uv run purpleloop telemetry-namespace --check` | "matches EventKind". `test_every_event_kind_maps_to_a_distinct_namespaced_span` covers all 13 kinds, and `test_an_unknown_future_kind_maps_generically_and_projects` maps `shadow_suppressed` with no code change |
+| Namespace drift, and the WP5.1 kind | `uv run purpleloop telemetry-namespace --check` after merging `phase-5` = `8d26986` | **exit 1, "has drifted from EventKind"**: WP5.1 added `SHADOW_SUPPRESSED` (`shadow-suppressed`), and the check caught it as designed. The generic rule already mapped it to `purpleloop.event.shadow_suppressed`, so no mapping code changed. The document was regenerated (`--write`), `NAMESPACE_VERSION` went 1.0.0 → 1.1.0 (a new span name is a minor bump), and the check then passed. `test_every_event_kind_maps_to_a_distinct_namespaced_span` covers all 14 kinds, and `test_the_wp51_shadow_suppressed_kind_projects` projects a real schema-1.2.0 shadow event |
 | Analysis export | `time uv run purpleloop analyze <agent suite bundle> --out artifacts/observability/analysis --query "SELECT status, count(*) AS runs, sum(findings) AS findings FROM runs GROUP BY status"` | rows: runs 25, events 2590, findings 25, detections 98; query `passed 25 25`; 5.7 s wall |
 | Analysis refuses unverified | one space appended to `agent-goal-hijack/summary.json` in a copy of that bundle, then `uv run purpleloop analyze artifacts/observability/tampered --out artifacts/observability/analysis-refused` | exit 1, `REFUSED: BUNDLE_NOT_VERIFIED: … artifact digest mismatch: agent-goal-hijack/summary.json`; the output directory was not created |
 | Analysis tests | `test_analysis.py` | table row counts checked against ledgers and summaries; tampered bundle, incomplete bundle (without `--allow-partial`), tampered Parquet, and forged `analysis.json` table names refused; analyst SQL cannot `read_csv`, `COPY … TO`, or re-enable external access |
@@ -92,6 +94,7 @@ recomputes every figure of a full-suite export from the ledger events directly.
 | `uv run pytest --junitxml=artifacts/junit-wp5.3.xml` (full suite, under `nohup`), before the merge (tree `7dcc75b` plus this note) | **796 passed, 3 skipped**, 91.70% branch coverage, 1473.83 s (wall 1477 s) |
 | The same, after merging `phase-5` = `80db489` (tree `0004072`) | **902 passed, 3 skipped, 2 warnings** (a Starlette `httpx` deprecation from `fastapi.testclient`, not from this package), **91.93%** branch coverage, 1333.72 s (wall 1336 s) |
 | Coverage of this package's modules in that run | `reporting/telemetry.py` 95%, `reporting/analysis.py` 98%, `telemetry_cli.py` 92% |
+| The same, after merging `phase-5` = `8d26986` (tree `296ba01`, which includes WP5.1's runtime and runner changes) | **1097 passed, 4 skipped, 2 warnings**, **92.27%** branch coverage, 1372.29 s (wall 1375 s). The telemetry tests alone on this tree: 62 passed in 83.41 s, so byte identity with telemetry on and off still holds after WP5.1 |
 
 ## Defects found
 
