@@ -131,7 +131,14 @@ written. Separate keys are not separate people.
 
 ## Full suite
 
-See the table at the end of this note (filled in from the detached run).
+| Tree | Command | Result |
+| --- | --- | --- |
+| `f347251` (WP5.5 code complete, after merging `phase-5` = `fe7d52c`; the later commits change only the README and this note) | `nohup /usr/bin/time -p uv run pytest --junitxml=artifacts/junit-wp5.5.xml` | **1199 passed, 8 skipped**, 0 failures, 0 errors, 1207 in the JUnit file; **91.84%** branch coverage (floor 85%); **1759.77 s** (real 1762.33 s, user 1668.21 s) |
+
+The 8 skips are the gated tests: the container lanes, including the 4 in
+`tests/phase5/test_codelab_container.py`, did not run without `PURPLELOOP_CONTAINER_TESTS=1`.
+Those 4 were run separately with the switch set (see above). No existing test under
+`tests/unit` … `tests/phase4` was edited, and the `phase0`–`phase4` workflow files are unchanged.
 
 ## What this does not show
 
