@@ -245,3 +245,65 @@ jobs:
         with:
           name: phase5-observability-evidence
           path: artifacts/
+
+  # WP5.5 — the codelab lane. Deterministic and offline: the in-process fixture's stub sandbox
+  # replays recorded effects and runs no snippet. codelab-run is the WP5.1 approval path end to
+  # end (shadow, an approval signed with a key generated inside the command and discarded,
+  # refusal without it), then the corpus, per-lane metrics, and replay trials.
+  codelab:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - name: Assert the codelab lane holds no model credential
+        run: |
+          if [ -n "$PURPLELOOP_MODEL_API_KEY" ] || [ -n "$PURPLELOOP_MODEL_ENDPOINT" ]; then
+            echo "::error::model credentials must never reach the codelab lane"
+            exit 1
+          fi
+      - run: >-
+          uv run pytest --no-cov --junitxml=artifacts/junit-codelab.xml
+          tests/phase5/test_codelab_lane.py tests/phase5/test_codelab_escape.py
+      - run: uv run purpleloop codelab-run --output-dir artifacts/codelab
+      - run: uv run purpleloop corpus-baseline --lane codelab --output artifacts/corpus-current-codelab.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase5-codelab-evidence
+          path: |
+            artifacts/junit-codelab.xml
+            artifacts/codelab/metrics.json
+            artifacts/corpus-current-codelab.json
+
+  # WP5.5 — the codelab sandbox container: the containment-escape suite, the stub calibration,
+  # the kill-mid-snippet fault, and container/in-process agreement, behind the container-test
+  # switch every container lane uses. gVisor (runsc) is used when the runner has it; the escape
+  # report records the runtime Docker actually used, read back from docker inspect.
+  codelab-container:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - name: Select the sandbox runtime
+        run: |
+          if docker info --format '{{json .Runtimes}}' | grep -q '"runsc"'; then
+            echo "CODELAB_SANDBOX_RUNTIME=runsc" >> "$GITHUB_ENV"
+          else
+            echo "CODELAB_SANDBOX_RUNTIME=runc" >> "$GITHUB_ENV"
+          fi
+      - run: PURPLELOOP_CONTAINER_TESTS=1 uv run pytest tests/phase5/test_codelab_container.py --no-cov
+      - run: uv run purpleloop codelab-escape --output-dir artifacts/codelab-escape
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase5-codelab-escape
+          path: artifacts/codelab-escape/escape-report.json

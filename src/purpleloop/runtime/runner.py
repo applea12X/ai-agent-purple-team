@@ -545,8 +545,13 @@ class PurpleTeamRunner:
                 target_tenant=self.scenario.actor.tenant_id,
                 arguments=intent.arguments.model_dump(mode="json"),
             )
+        # A lane may bring its own closed vocabulary (WP5.5 codelab); every earlier lane uses the
+        # agent lane's, exactly as before.
+        vocabulary = self.lane.intents
+        model = vocabulary.model if vocabulary is not None else AgentToolIntent
+        adapters = vocabulary.adapters if vocabulary is not None else INTENT_ADAPTERS
         try:
-            agent_intent = AgentToolIntent.model_validate(raw)
+            agent_intent: Any = model.model_validate(raw)
         except ValueError as exc:
             self.record(
                 EventKind.LIFECYCLE,
@@ -560,7 +565,7 @@ class PurpleTeamRunner:
             node_id=node,
             adapter=cast(
                 'Literal["http", "tool", "chat", "browser", "agent"]',
-                INTENT_ADAPTERS[agent_intent.operation],
+                adapters[agent_intent.operation],
             ),
             operation=agent_intent.operation,
             asset_id=self.lane.data_asset_id,

@@ -1,0 +1,88 @@
+# codelab (WP5.5, ADR 0015): the fixture application, its loopback relay, and the sandbox
+# container that runs analysis snippets. Snippets run only in codelab-sandbox.
+services:
+  codelab-fixture:
+    image: purpleloop-codelab-fixture
+    build:
+      context: .
+      dockerfile: targets/codelab/Dockerfile
+    read_only: true
+    tmpfs: ["/tmp:size=8m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      CODELAB_ACTOR_CREDENTIALS: ${CODELAB_ACTOR_CREDENTIALS:?required}
+      CODELAB_CONTROL_CREDENTIAL: ${CODELAB_CONTROL_CREDENTIAL:?required}
+      CODELAB_SANDBOX_TOKEN: ${CODELAB_SANDBOX_TOKEN:?required}
+      CODELAB_OUTSIDE_CANARY: ${CODELAB_OUTSIDE_CANARY:?required}
+    # The broker socket lives here. Read-write for the fixture, read-only for the sandbox.
+    volumes: ["codelab-ipc:/ipc"]
+    networks: [codelab-isolated]
+    healthcheck:
+      test: [CMD, /app/.venv/bin/python, -c, "import os, socket; socket.create_connection(('127.0.0.1',8080),1).close(); socket.create_connection(('127.0.0.1',8081),1).close(); assert os.path.exists('/ipc/broker.sock')"]
+      interval: 1s
+      timeout: 2s
+      retries: 40
+  codelab-sandbox:
+    image: purpleloop-codelab-sandbox
+    build:
+      context: .
+      dockerfile: targets/codelab/sandbox/Dockerfile
+    # runc unless the launcher asks for another runtime (runsc where gVisor is installed). The
+    # harness records what Docker actually used from `docker inspect`, not this variable.
+    runtime: ${CODELAB_SANDBOX_RUNTIME:-runc}
+    network_mode: none
+    # A private IPC namespace with no /dev/shm: the tmpfs below is the only writable path.
+    ipc: none
+    read_only: true
+    tmpfs: ["/scratch:size=16m,mode=0700,uid=10003,gid=10003"]
+    cap_drop: [ALL]
+    # Docker's default seccomp profile applies because none is overridden here.
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 0.5
+    ulimits:
+      nofile: {soft: 256, hard: 256}
+      core: {soft: 0, hard: 0}
+    environment:
+      CODELAB_SANDBOX_TOKEN: ${CODELAB_SANDBOX_TOKEN:?required}
+      CODELAB_SANDBOX_RUNTIME: ${CODELAB_SANDBOX_RUNTIME:-runc}
+    volumes:
+      - type: volume
+        source: codelab-ipc
+        target: /ipc
+        read_only: true
+        volume: {nocopy: true}
+    stop_grace_period: 1s
+    depends_on:
+      codelab-fixture:
+        condition: service_healthy
+  codelab-ingress:
+    image: purpleloop-codelab-fixture
+    command: [/app/.venv/bin/python, -m, purpleloop.fixture.codelab.relay]
+    read_only: true
+    tmpfs: ["/tmp:size=8m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ports:
+      - "127.0.0.1:38080:8080"
+      - "127.0.0.1:38081:8081"
+    networks: [codelab-isolated, codelab-ingress]
+    depends_on:
+      codelab-fixture:
+        condition: service_healthy
+      codelab-sandbox:
+        condition: service_started
+    healthcheck:
+      test: [CMD, /app/.venv/bin/python, -c, "import socket; socket.create_connection(('127.0.0.1',8080),1).close(); socket.create_connection(('127.0.0.1',8081),1).close()"]
+      interval: 1s
+      timeout: 2s
+      retries: 40
+networks:
+  codelab-ingress: {}
+  codelab-isolated:
+    internal: true
+volumes:
+  codelab-ipc: {}
