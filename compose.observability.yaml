@@ -1,0 +1,35 @@
+# Optional self-hosted observability profile (WP5.3, plan §2.4, ADR 0016). Off by default: the
+# service carries the `observability` profile, so a plain `docker compose up` never starts it,
+# and no CI lane starts it.
+#
+#   docker compose -f compose.observability.yaml --profile observability up -d
+#   uv run purpleloop observe-suite --lane agent --collector-port 24318
+#   docker compose -f compose.observability.yaml --profile observability down
+#
+# Combined with compose.phase2.yaml (`-f compose.phase2.yaml -f compose.observability.yaml`), the
+# collector joins the fixture's internal network, `supportlab-isolated`. Its only other
+# attachment is the loopback-published ingress the harness posts to -- the same shape as
+# `supportlab-ingress`. The harness posts only to the collector a signed Manifest 1.5 names as an
+# asset (`phase5.telemetry`), and the collector configuration has no network exporter.
+#
+# The image is the official contrib distribution (the `file` exporter is a contrib component),
+# pinned by tag and digest.
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.128.0@sha256:1ab0baba0ee3695d823c46653d8a6e8894896e668ce8bd7ebe002e948d827bc7
+    profiles: [observability]
+    command: [--config=/etc/otelcol/collector.yaml]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - ./targets/observability/collector.yaml:/etc/otelcol/collector.yaml:ro
+      - ${PURPLELOOP_COLLECTOR_EXPORT:-./artifacts/observability/collector}:/export
+    ports:
+      - "127.0.0.1:24318:4318"
+    networks: [supportlab-isolated, observability-ingress]
+
+networks:
+  observability-ingress: {}
+  supportlab-isolated:
+    internal: true
