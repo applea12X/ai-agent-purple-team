@@ -2,7 +2,7 @@
 
 Date: November 25, 2026
 
-Measured on branch `worktree-agent-a5503ba061923ea25` (from `phase-5` = `8f000e0`, later merged with `phase-5` = `80db489` and then `8d26986`), on the same
+Measured on branch `worktree-agent-a5503ba061923ea25` (from `phase-5` = `8f000e0`, later merged with `phase-5` = `80db489`, `8d26986`, and `d3e3b36`), on the same
 local macOS machine as WP5.0.1, with Docker Desktop running. Every number below comes from a
 command run in this session, and the command is written next to it. No model was called. Every
 run used the offline scripted provider and the in-process fixture. The suite, collector, and
@@ -95,6 +95,7 @@ recomputes every figure of a full-suite export from the ledger events directly.
 | The same, after merging `phase-5` = `80db489` (tree `0004072`) | **902 passed, 3 skipped, 2 warnings** (a Starlette `httpx` deprecation from `fastapi.testclient`, not from this package), **91.93%** branch coverage, 1333.72 s (wall 1336 s) |
 | Coverage of this package's modules in that run | `reporting/telemetry.py` 95%, `reporting/analysis.py` 98%, `telemetry_cli.py` 92% |
 | The same, after merging `phase-5` = `8d26986` (tree `296ba01`, which includes WP5.1's runtime and runner changes) | **1097 passed, 4 skipped, 2 warnings**, **92.27%** branch coverage, 1372.29 s (wall 1375 s). The telemetry tests alone on this tree: 62 passed in 83.41 s, so byte identity with telemetry on and off still holds after WP5.1 |
+| After merging `phase-5` = `d3e3b36` (WP5.2; tree `2e52ee1`): `uv run pytest tests/phase5 -q --no-cov`, detached | **674 passed, 1 skipped, 2 warnings** in 318.38 s, including all 62 telemetry and analysis tests. The full suite was **not re-run** on this tree: the merge touched none of `reporting/telemetry.py`, `reporting/analysis.py`, `telemetry_cli.py`, the ledger, the bundle writer, or the event schema. It did touch `runtime/supportlab.py` and `adapters/scripted_model.py`, which the byte-identity runs exercise, and those runs passed. WP5.2 does not import duckdb yet |
 
 ## Defects found
 
