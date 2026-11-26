@@ -1,0 +1,405 @@
+{
+  "schema_version": "1.0.0",
+  "lane": "codelab",
+  "runtime": "runc",
+  "runtime_requested": "runc",
+  "gvisor": false,
+  "container_security": {
+    "Runtime": "runc",
+    "NetworkMode": "none",
+    "IpcMode": "none",
+    "ReadonlyRootfs": true,
+    "CapDrop": [
+      "ALL"
+    ],
+    "CapAdd": null,
+    "SecurityOpt": [
+      "no-new-privileges:true"
+    ],
+    "Privileged": false,
+    "PidsLimit": 64,
+    "Memory": 268435456,
+    "MemorySwap": 268435456,
+    "NanoCpus": 500000000,
+    "Tmpfs": {
+      "/scratch": "size=16m,mode=0700,uid=10003,gid=10003"
+    },
+    "Mounts": [
+      {
+        "Type": "volume",
+        "Target": "/ipc",
+        "ReadOnly": true
+      }
+    ],
+    "DiffBeforeAttempts": []
+  },
+  "attempts": [
+    {
+      "attempt_id": "network-egress",
+      "category": "network-egress",
+      "contained": true,
+      "checks": {
+        "no-network-success": true,
+        "listener-untouched": true,
+        "loopback-only": true,
+        "network-mode-none": true,
+        "sandbox-alive": true
+      },
+      "timed_out": false,
+      "exit_code": 0,
+      "swept_processes": 0,
+      "elapsed_seconds": 0.093,
+      "kernel_status": "completed",
+      "report": {
+        "dns": "BLOCKED gaierror",
+        "fixture": "BLOCKED gaierror",
+        "host-listener": "BLOCKED gaierror",
+        "interfaces_up": [
+          "lo"
+        ],
+        "public-ip": "BLOCKED OSError",
+        "published-relay": "BLOCKED ConnectionRefusedError",
+        "routes": [],
+        "udp": "BLOCKED OSError"
+      },
+      "outside": {
+        "listener_connections": 0,
+        "container_diff": [],
+        "ipc_listing": [
+          "broker.sock"
+        ],
+        "processes_after": 1,
+        "pids_peak": 7,
+        "oom_killed": false,
+        "broker_rejections": [
+          0,
+          0
+        ],
+        "probe_ok": true
+      }
+    },
+    {
+      "attempt_id": "write-outside-tmpfs",
+      "category": "write-outside-tmpfs",
+      "contained": true,
+      "checks": {
+        "no-write-success": true,
+        "container-layer-unchanged": true,
+        "ipc-volume-unchanged": true,
+        "sandbox-alive": true
+      },
+      "timed_out": false,
+      "exit_code": 0,
+      "swept_processes": 0,
+      "elapsed_seconds": 0.097,
+      "kernel_status": "completed",
+      "report": {
+        "/codelab-escape": "BLOCKED OSError",
+        "/dev/shm/codelab-escape": "BLOCKED FileNotFoundError",
+        "/etc/codelab-escape": "BLOCKED OSError",
+        "/ipc/codelab-escape": "BLOCKED OSError",
+        "/proc/1/root/codelab-escape": "BLOCKED PermissionError",
+        "/sandbox/codelab-escape": "BLOCKED OSError",
+        "/tmp/codelab-escape": "BLOCKED OSError",
+        "/usr/local/lib/codelab-escape": "BLOCKED OSError",
+        "/var/tmp/codelab-escape": "BLOCKED OSError"
+      },
+      "outside": {
+        "listener_connections": 0,
+        "container_diff": [],
+        "ipc_listing": [
+          "broker.sock"
+        ],
+        "processes_after": 1,
+        "pids_peak": 7,
+        "oom_killed": false,
+        "broker_rejections": [
+          0,
+          0
+        ],
+        "probe_ok": true
+      }
+    },
+    {
+      "attempt_id": "tmpfs-size-cap",
+      "category": "write-outside-tmpfs",
+      "contained": true,
+      "checks": {
+        "tmpfs-bounded": true,
+        "sandbox-alive": true
+      },
+      "timed_out": false,
+      "exit_code": 0,
+      "swept_processes": 0,
+      "elapsed_seconds": 0.144,
+      "kernel_status": "completed",
+      "report": {
+        "bytes_written": 15728626,
+        "fill": "BLOCKED OSError",
+        "large_file": "BLOCKED OSError"
+      },
+      "outside": {
+        "listener_connections": 0,
+        "container_diff": [],
+        "ipc_listing": [
+          "broker.sock"
+        ],
+        "processes_after": 1,
+        "pids_peak": 7,
+        "oom_killed": false,
+        "broker_rejections": [
+          0,
+          0
+        ],
+        "probe_ok": true
+      }
+    },
+    {
+      "attempt_id": "read-canary-outside",
+      "category": "read-canary-outside",
+      "contained": true,
+      "checks": {
+        "no-outside-secret": true,
+        "broker-refused-forgery": true,
+        "sandbox-alive": true
+      },
+      "timed_out": false,
+      "exit_code": 0,
+      "swept_processes": 0,
+      "elapsed_seconds": 0.087,
+      "kernel_status": "completed",
+      "report": {
+        "/ipc/../tmp/codelab-outside-canary": "BLOCKED FileNotFoundError",
+        "/proc/1/environ": "BLOCKED PermissionError",
+        "/proc/1/mem": "BLOCKED PermissionError",
+        "/proc/1/root/etc/hostname": "BLOCKED PermissionError",
+        "/tmp/codelab-outside-canary": "BLOCKED FileNotFoundError",
+        "broker_reply": "",
+        "environment": [
+          "HOME",
+          "LANG",
+          "PATH"
+        ],
+        "ipc_listing": [
+          "broker.sock"
+        ]
+      },
+      "outside": {
+        "listener_connections": 0,
+        "container_diff": [],
+        "ipc_listing": [
+          "broker.sock"
+        ],
+        "processes_after": 1,
+        "pids_peak": 7,
+        "oom_killed": false,
+        "broker_rejections": [
+          0,
+          1
+        ],
+        "probe_ok": true
+      }
+    },
+    {
+      "attempt_id": "fork-bomb",
+      "category": "fork-bomb",
+      "contained": true,
+      "checks": {
+        "timed-out": true,
+        "pids-bounded": true,
+        "no-leftover-process": true,
+        "sandbox-alive": true
+      },
+      "timed_out": true,
+      "exit_code": -9,
+      "swept_processes": 74,
+      "elapsed_seconds": 3.24,
+      "kernel_status": "completed",
+      "report": null,
+      "outside": {
+        "listener_connections": 0,
+        "container_diff": [],
+        "ipc_listing": [
+          "broker.sock"
+        ],
+        "processes_after": 1,
+        "pids_peak": 64,
+        "oom_killed": false,
+        "broker_rejections": [
+          1,
+          1
+        ],
+        "probe_ok": true
+      }
+    },
+    {
+      "attempt_id": "wall-time-busy-loop",
+      "category": "wall-time-kill",
+      "contained": true,
+      "checks": {
+        "timed-out": true,
+        "no-leftover-process": true,
+        "sandbox-alive": true
+      },
+      "timed_out": true,
+      "exit_code": -9,
+      "swept_processes": 0,
+      "elapsed_seconds": 3.032,
+      "kernel_status": "completed",
+      "report": null,
+      "outside": {
+        "listener_connections": 0,
+        "container_diff": [],
+        "ipc_listing": [
+          "broker.sock"
+        ],
+        "processes_after": 1,
+        "pids_peak": 64,
+        "oom_killed": false,
+        "broker_rejections": [
+          1,
+          1
+        ],
+        "probe_ok": true
+      }
+    },
+    {
+      "attempt_id": "wall-time-detached-sleeper",
+      "category": "wall-time-kill",
+      "contained": true,
+      "checks": {
+        "timed-out": true,
+        "no-leftover-process": true,
+        "sandbox-alive": true
+      },
+      "timed_out": true,
+      "exit_code": -9,
+      "swept_processes": 2,
+      "elapsed_seconds": 3.046,
+      "kernel_status": "completed",
+      "report": null,
+      "outside": {
+        "listener_connections": 0,
+        "container_diff": [],
+        "ipc_listing": [
+          "broker.sock"
+        ],
+        "processes_after": 1,
+        "pids_peak": 64,
+        "oom_killed": false,
+        "broker_rejections": [
+          1,
+          1
+        ],
+        "probe_ok": true
+      }
+    },
+    {
+      "attempt_id": "orphan-outlives-snippet",
+      "category": "wall-time-kill",
+      "contained": true,
+      "checks": {
+        "processes-swept": true,
+        "no-leftover-process": true,
+        "sandbox-alive": true
+      },
+      "timed_out": false,
+      "exit_code": 0,
+      "swept_processes": 3,
+      "elapsed_seconds": 0.053,
+      "kernel_status": "completed",
+      "report": null,
+      "outside": {
+        "listener_connections": 0,
+        "container_diff": [],
+        "ipc_listing": [
+          "broker.sock"
+        ],
+        "processes_after": 1,
+        "pids_peak": 64,
+        "oom_killed": false,
+        "broker_rejections": [
+          1,
+          1
+        ],
+        "probe_ok": true
+      }
+    },
+    {
+      "attempt_id": "memory-limit",
+      "category": "resource-limit",
+      "contained": true,
+      "checks": {
+        "allocation-refused": true,
+        "not-oom-killed": true,
+        "sandbox-alive": true
+      },
+      "timed_out": false,
+      "exit_code": 0,
+      "swept_processes": 0,
+      "elapsed_seconds": 0.107,
+      "kernel_status": "completed",
+      "report": {
+        "allocate_1GiB": "BLOCKED MemoryError"
+      },
+      "outside": {
+        "listener_connections": 0,
+        "container_diff": [],
+        "ipc_listing": [
+          "broker.sock"
+        ],
+        "processes_after": 1,
+        "pids_peak": 64,
+        "oom_killed": false,
+        "broker_rejections": [
+          1,
+          1
+        ],
+        "probe_ok": true
+      }
+    },
+    {
+      "attempt_id": "privilege-escalation",
+      "category": "privilege",
+      "contained": true,
+      "checks": {
+        "no-privilege": true,
+        "sandbox-alive": true
+      },
+      "timed_out": false,
+      "exit_code": 0,
+      "swept_processes": 0,
+      "elapsed_seconds": 0.122,
+      "kernel_status": "completed",
+      "report": {
+        "CapBnd": "0000000000000000",
+        "CapEff": "0000000000000000",
+        "CapPrm": "0000000000000000",
+        "NoNewPrivs": "1",
+        "Seccomp": "2",
+        "kill_supervisor": "SIGNAL SENT",
+        "ptrace_attach_supervisor": "BLOCKED errno 1",
+        "setuid": "BLOCKED PermissionError"
+      },
+      "outside": {
+        "listener_connections": 0,
+        "container_diff": [],
+        "ipc_listing": [
+          "broker.sock"
+        ],
+        "processes_after": 1,
+        "pids_peak": 64,
+        "oom_killed": false,
+        "broker_rejections": [
+          1,
+          1
+        ],
+        "probe_ok": true
+      }
+    }
+  ],
+  "contained": 10,
+  "breaches": [],
+  "approval_digest": "8c8b5a3284fb2d24948a19e64b7e34c99eb3d590b08b3365e65b78923eb5e224",
+  "note": "Measured against the real sandbox container. gVisor was used only if runtime is runsc; otherwise this is hardened runc. A breach is release-blocking."
+}
