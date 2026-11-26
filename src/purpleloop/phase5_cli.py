@@ -44,6 +44,50 @@ def _private_key(path: Path) -> Ed25519PrivateKey:
     return loaded
 
 
+def _shadow_codelab(
+    output_dir: Path, scenario_ids: list[str], action_class: list[str], seed: int
+) -> None:
+    """``shadow-run --lane codelab``: the codelab manifest's shadow twin over its corpus."""
+    from purpleloop.control.capabilities import capability_delta
+    from purpleloop.runtime import codelab, governance
+    from purpleloop.runtime.shadow import ShadowBundleError
+
+    try:
+        classes = {ActionClass(item) for item in action_class} | {
+            ActionClass.READ,
+            ActionClass.WRITE,
+        }
+        if ActionClass.CODE_EXEC not in classes:
+            # analysis.run derives code-exec whatever is declared; declaring it keeps the
+            # manifest honest about what it grants.
+            classes.add(ActionClass.CODE_EXEC)
+        key = Ed25519PrivateKey.generate()
+        requested = codelab.codelab_manifest(key, seed=seed, action_classes=sorted(classes))
+        scenarios = codelab.load_corpus()
+        if scenario_ids:
+            scenarios = [item for item in scenarios if item.scenario_id in set(scenario_ids)]
+            if {item.scenario_id for item in scenarios} != set(scenario_ids):
+                raise ValueError("unknown scenario id")
+        run_id = "shadow-codelab-" + datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        report, runner = asyncio.run(
+            codelab.shadow_codelab(output_dir, requested, key, scenarios, run_id=run_id)
+        )
+    except (OSError, ValueError, ShadowBundleError) as exc:
+        typer.echo(f"FAILED: {exc}", err=True)
+        raise typer.Exit(1) from None
+    baseline, _ = governance.committed_baseline()
+    delta = sorted(item.value for item in capability_delta(baseline.surface, requested))
+    dispatches = sum(counter.dispatches for counter in runner.counters.values())
+    typer.echo(f"scenarios {len(report.scenario_digests)}")
+    typer.echo(f"suppressed executions {report.suppressed_executions}")
+    typer.echo(f"adapter dispatches {dispatches} (report adapter_calls {report.adapter_calls})")
+    typer.echo(f"unreachable steps {report.unreachable_steps}")
+    typer.echo(f"action classes reached {sorted(c.value for c in report.action_classes_reached)}")
+    typer.echo(f"capability delta vs baseline {delta or 'none'}")
+    typer.echo(f"shadow report digest {report.report_digest()}")
+    typer.echo(f"Verified shadow bundle: {output_dir.resolve()}")
+
+
 def register(app: typer.Typer) -> None:
     telemetry_cli.register(app)  # WP5.3 observe-suite, telemetry-*, analyze
     from purpleloop.matrix_cli import register as register_matrix
@@ -130,8 +174,17 @@ def register(app: typer.Typer) -> None:
             None, help="A requested manifest 1.5 (JSON) instead of the built-in agent manifest"
         ),
         seed: int = 42,
+        lane: str = typer.Option(
+            "agent", help="agent, or codelab (WP5.5: its 1.5 manifest always carries code-exec)"
+        ),
     ) -> None:
-        """Run the requested manifest's shadow twin over the agent corpus; nothing executes."""
+        """Run the requested manifest's shadow twin over a lane's corpus; nothing executes."""
+        if lane == "codelab":
+            _shadow_codelab(output_dir, scenario, action_class, seed)
+            return
+        if lane != "agent":
+            typer.echo(f"INVALID: unknown lane {lane}", err=True)
+            raise typer.Exit(2)
         from purpleloop.adapters.scripted_attacker import ScriptedAttackerModel
         from purpleloop.agent_cli import SCENARIOS
         from purpleloop.control.approvals import shadow_twin

@@ -312,9 +312,7 @@ def register(app: typer.Typer) -> None:
                     scenarios, summaries = asyncio.run(codelab.run_offline_corpus(Path(scratch)))
                     truth, corpus = codelab.GROUND_TRUTH, "scenarios/codelab"
                 else:
-                    scenarios, summaries = asyncio.run(
-                        run_offline_corpus(Path(scratch), seed=seed)
-                    )
+                    scenarios, summaries = asyncio.run(run_offline_corpus(Path(scratch), seed=seed))
                     truth, corpus = AGENT_GROUND_TRUTH, "scenarios/agent"
             metrics = risk_class_metrics(scenarios, load_ground_truth(truth), summaries)
             baseline = build_baseline(metrics, corpus=corpus, commit=resolved_commit)
