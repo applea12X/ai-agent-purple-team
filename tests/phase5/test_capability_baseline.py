@@ -31,7 +31,10 @@ def test_the_committed_baseline_says_its_key_was_ephemeral() -> None:
 
 
 def test_no_private_key_is_committed_beside_it() -> None:
-    for path in (ROOT / "baselines").iterdir():
+    # Recursive: baselines/ also holds directories (model-calibration/, WP5.0.3).
+    files = [path for path in (ROOT / "baselines").rglob("*") if path.is_file()]
+    assert files
+    for path in files:
         assert "PRIVATE KEY" not in path.read_text(encoding="utf-8", errors="ignore"), path
 
 
