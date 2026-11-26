@@ -144,10 +144,13 @@ FIELD_CLASSIFICATION: Mapping[str, Mapping[str, Classification]] = MappingProxyT
 
 #: Operations whose action class is higher than their side-effect class implies. Empty in v1,
 #: where every operation is ``read`` or ``write``; a work package that adds a code-execution or
-#: external-send operation registers it here (WP5.5: the codelab snippet operation is
-#: ``code-exec``), so the class is derived from the operation as well as declared -- a manifest
-#: cannot grant the operation while declaring only ``read`` and ``write``.
-OPERATION_ACTION_CLASSES: Mapping[str, ActionClass] = MappingProxyType({})
+#: external-send operation registers it here (WP5.5: the codelab snippet operation,
+#: ``analysis.run``, is ``code-exec``), so the class is derived from the operation as well as
+#: declared -- a manifest cannot grant the operation while declaring only ``read`` and ``write``.
+#: No v1 lane manifest grants ``analysis.run``, so the committed baseline's surface is unchanged.
+OPERATION_ACTION_CLASSES: Mapping[str, ActionClass] = MappingProxyType(
+    {"analysis.run": ActionClass.CODE_EXEC}  # phase5_tools.CODE_EXEC_OPERATION (ADR 0015)
+)
 
 
 def _section_objects(manifest: AuthorizationManifest) -> dict[str, BaseModel]:

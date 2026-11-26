@@ -123,7 +123,8 @@ def compile_plan(
             raise PlanError("Phase 3 grants required")
         task = scenario.agent_task
         if task is not None:
-            unknown = task.capabilities - INTENT_OPERATIONS
+            operations = lane.intents.operations if lane.intents is not None else INTENT_OPERATIONS
+            unknown = task.capabilities - operations
             if unknown:
                 raise PlanError(
                     f"declared capability is not an intent operation: {sorted(unknown)}"
