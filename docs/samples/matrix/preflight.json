@@ -1,0 +1,51 @@
+{
+  "cost_cap_microusd": 0,
+  "cost_microusd": 0,
+  "created_at": "2026-11-25T03:21:10.715415Z",
+  "decision": "accepted",
+  "detail": [],
+  "harness_seconds_per_trial": 1.5,
+  "matrix_digest": "92553e0b452deb45fa4a892fae0540ad1b167b9c9f80f9f3c3966e004fc1e6a1",
+  "matrix_id": "standins-full",
+  "reasons": [],
+  "repetitions": 5,
+  "rows": [
+    {
+      "cost_microusd": 0,
+      "kind": "deterministic-anchor",
+      "model_calls": 750,
+      "row_id": "scripted-compliant",
+      "seconds_per_call": null,
+      "tokens": 1362750,
+      "tokens_are_a_bound": true,
+      "trials": 125,
+      "wall_seconds": 187.5
+    },
+    {
+      "cost_microusd": 0,
+      "kind": "deterministic-anchor",
+      "model_calls": 750,
+      "row_id": "delimitation-blind",
+      "seconds_per_call": null,
+      "tokens": 1362750,
+      "tokens_are_a_bound": true,
+      "trials": 125,
+      "wall_seconds": 187.5
+    },
+    {
+      "cost_microusd": 0,
+      "kind": "deterministic-anchor",
+      "model_calls": 750,
+      "row_id": "hostile",
+      "seconds_per_call": null,
+      "tokens": 1362750,
+      "tokens_are_a_bound": true,
+      "trials": 125,
+      "wall_seconds": 187.5
+    }
+  ],
+  "scenarios": 25,
+  "trials": 375,
+  "wall_seconds": 562.5,
+  "wall_time_cap_seconds": 3600
+}

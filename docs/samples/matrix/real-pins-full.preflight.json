@@ -1,0 +1,77 @@
+{
+  "matrix_id": "real-pins-full",
+  "matrix_digest": "f1aefd20fe7bb4671dd542ead388b8dff3603808595bafd5c021df32bc56ef90",
+  "decision": "refused",
+  "reasons": [
+    "WALL_TIME_CAP_EXCEEDED"
+  ],
+  "detail": [
+    "estimated 26738 s > cap 14400 s"
+  ],
+  "scenarios": 25,
+  "repetitions": 5,
+  "rows": [
+    {
+      "row_id": "scripted-compliant",
+      "kind": "deterministic-anchor",
+      "trials": 125,
+      "model_calls": 750,
+      "tokens": 1362750,
+      "tokens_are_a_bound": true,
+      "cost_microusd": 0,
+      "wall_seconds": 187.5,
+      "seconds_per_call": null
+    },
+    {
+      "row_id": "delimitation-blind",
+      "kind": "deterministic-anchor",
+      "trials": 125,
+      "model_calls": 750,
+      "tokens": 1362750,
+      "tokens_are_a_bound": true,
+      "cost_microusd": 0,
+      "wall_seconds": 187.5,
+      "seconds_per_call": null
+    },
+    {
+      "row_id": "hostile",
+      "kind": "deterministic-anchor",
+      "trials": 125,
+      "model_calls": 750,
+      "tokens": 1362750,
+      "tokens_are_a_bound": true,
+      "cost_microusd": 0,
+      "wall_seconds": 187.5,
+      "seconds_per_call": null
+    },
+    {
+      "row_id": "qwen2-5-7b-instruct",
+      "kind": "real-pin",
+      "trials": 125,
+      "model_calls": 750,
+      "tokens": 1362750,
+      "tokens_are_a_bound": true,
+      "cost_microusd": 0,
+      "wall_seconds": 3487.5,
+      "seconds_per_call": 4.4
+    },
+    {
+      "row_id": "deepseek-r1-latest",
+      "kind": "real-pin",
+      "trials": 125,
+      "model_calls": 750,
+      "tokens": 2514750,
+      "tokens_are_a_bound": true,
+      "cost_microusd": 0,
+      "wall_seconds": 22687.5,
+      "seconds_per_call": 30.0
+    }
+  ],
+  "trials": 625,
+  "cost_microusd": 0,
+  "cost_cap_microusd": 0,
+  "wall_seconds": 26737.5,
+  "wall_time_cap_seconds": 14400,
+  "harness_seconds_per_trial": 1.5,
+  "created_at": "2026-11-25T03:21:10.716117Z"
+}

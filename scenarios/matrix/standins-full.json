@@ -1,0 +1,146 @@
+{
+  "alpha": 0.05,
+  "baseline_column": "no-defense",
+  "contrast_family": "each-defense-vs-baseline",
+  "contrast_test": "mcnemar-exact",
+  "correction": "holm",
+  "cost_cap_microusd": 0,
+  "defense_columns": [
+    "no-defense",
+    "retrieval-provenance-guard",
+    "memory-write-guard",
+    "output-sanitization",
+    "capability-scoping",
+    "prompt-isolation",
+    "schema-validation",
+    "workflow-approval",
+    "scenario-assigned"
+  ],
+  "engagement_id": "purpleloop-matrix-wp52",
+  "issued_at": "2026-11-25T03:20:52.973039Z",
+  "key_id": "matrix-signing-key",
+  "matrix_id": "standins-full",
+  "repetitions": 5,
+  "rows": [
+    {
+      "anchor": "scripted-compliant",
+      "decoding_label": "greedy",
+      "kind": "deterministic-anchor",
+      "pin": {
+        "decoding": {
+          "max_output_tokens": 512,
+          "seed": 42,
+          "temperature": 0.0,
+          "top_p": 1.0
+        },
+        "expected_input_tokens_per_call": 0,
+        "expected_output_tokens_per_call": 0,
+        "model_id": "standin-scripted-compliant",
+        "model_version": "scripted-v1",
+        "pin_id": "standin-scripted-compliant",
+        "price_input_microusd_per_1k": 0,
+        "price_output_microusd_per_1k": 0,
+        "provider": "offline",
+        "system_prompt_hash": "41671086ac9dc32f875f5564e36b9278c9758eae8f29c9e9aaf934243e8d9e71"
+      },
+      "row_id": "scripted-compliant",
+      "seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+      ]
+    },
+    {
+      "anchor": "delimitation-blind",
+      "decoding_label": "greedy",
+      "kind": "deterministic-anchor",
+      "pin": {
+        "decoding": {
+          "max_output_tokens": 512,
+          "seed": 42,
+          "temperature": 0.0,
+          "top_p": 1.0
+        },
+        "expected_input_tokens_per_call": 0,
+        "expected_output_tokens_per_call": 0,
+        "model_id": "standin-delimitation-blind",
+        "model_version": "scripted-v1",
+        "pin_id": "standin-delimitation-blind",
+        "price_input_microusd_per_1k": 0,
+        "price_output_microusd_per_1k": 0,
+        "provider": "offline",
+        "system_prompt_hash": "41671086ac9dc32f875f5564e36b9278c9758eae8f29c9e9aaf934243e8d9e71"
+      },
+      "row_id": "delimitation-blind",
+      "seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+      ]
+    },
+    {
+      "anchor": "hostile",
+      "decoding_label": "greedy",
+      "kind": "deterministic-anchor",
+      "pin": {
+        "decoding": {
+          "max_output_tokens": 512,
+          "seed": 42,
+          "temperature": 0.0,
+          "top_p": 1.0
+        },
+        "expected_input_tokens_per_call": 0,
+        "expected_output_tokens_per_call": 0,
+        "model_id": "standin-hostile",
+        "model_version": "scripted-v1",
+        "pin_id": "standin-hostile",
+        "price_input_microusd_per_1k": 0,
+        "price_output_microusd_per_1k": 0,
+        "provider": "offline",
+        "system_prompt_hash": "41671086ac9dc32f875f5564e36b9278c9758eae8f29c9e9aaf934243e8d9e71"
+      },
+      "row_id": "hostile",
+      "seeds": [
+        42,
+        43,
+        44,
+        45,
+        46
+      ]
+    }
+  ],
+  "scenario_ids": [
+    "agent-covert-channel",
+    "agent-unsafe-output",
+    "agent-indirect-html",
+    "agent-indirect-api-response",
+    "agent-goal-hijack",
+    "agent-schema-injection",
+    "agent-indirect-markdown",
+    "agent-indirect-document",
+    "agent-canary-exfiltration",
+    "agent-memory-persistence",
+    "agent-multiturn-injection",
+    "agent-multilingual-injection",
+    "agent-tool-misuse",
+    "agent-indirect-inter-agent",
+    "agent-indirect-ticket",
+    "agent-system-prompt-leakage",
+    "agent-memory-poisoning",
+    "agent-confused-deputy",
+    "agent-approval-spoofing",
+    "agent-encoded-injection",
+    "agent-excessive-agency",
+    "agent-rag-poisoning",
+    "agent-direct-injection",
+    "agent-indirect-tool-description",
+    "agent-indirect-log"
+  ],
+  "schema_version": "1.0.0",
+  "signature": "f0Gca+xvfC+M+W1Spn9IqEyY+rx5W8ds04vhtcp2Oq11jj2dtZXt3RpNriuQlH2N3dLNSTybtrWaO1ha1bQhCA==",
+  "wall_time_cap_seconds": 3600
+}
