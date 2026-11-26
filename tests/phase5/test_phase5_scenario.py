@@ -26,6 +26,22 @@ PINNED_CORPUS_DIGESTS = {
     "agent": (25, "e40a5ce190641f675c5343cbedb2bf3b0962f788962bd42ef70b85bb171558e5"),
 }
 PHASE5_FIELDS = {"origin", "import_source", "public_exposure", "lane"}
+#: WP5.5: the codelab corpus, recorded when it was authored (10 Scenario 1.4 documents). A
+#: deliberate edit to it changes this digest and updates it here in the same commit.
+PINNED_PHASE5_CORPUS_DIGESTS = {
+    "codelab": (10, "f8fe2f396fe595cab61091c1b79de06963226794f945c5bfb817b7a0019ca488"),
+}
+
+
+@pytest.mark.parametrize("lane", sorted(PINNED_PHASE5_CORPUS_DIGESTS))
+def test_phase5_corpus_is_pinned(lane: str) -> None:
+    scenarios = {
+        path.name: load_scenario(path) for path in scenario_paths(ROOT / "scenarios" / lane)
+    }
+    count, digest = PINNED_PHASE5_CORPUS_DIGESTS[lane]
+    assert len(scenarios) == count
+    assert digest_data(sorted((name, s.digest()) for name, s in scenarios.items())) == digest
+    assert all(s.schema_version == "1.4.0" and s.lane == lane for s in scenarios.values())
 
 
 @pytest.mark.parametrize("lane", sorted(PINNED_CORPUS_DIGESTS))

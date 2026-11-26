@@ -167,3 +167,15 @@ observability-up:
 
 observability-down:
 	docker compose -f compose.observability.yaml --profile observability down
+
+# WP5.5 codelab (phase5.yml job `codelab`). `codelab-check` is deterministic and offline (stub
+# sandbox); `codelab-container` runs the escape suite and the container lane and needs Docker.
+.PHONY: codelab-check codelab-container
+codelab-check:
+	uv run pytest --no-cov tests/phase5/test_codelab_lane.py tests/phase5/test_codelab_escape.py
+	uv run purpleloop codelab-run --output-dir artifacts/codelab
+	uv run purpleloop corpus-baseline --lane codelab --output artifacts/corpus-current-codelab.json
+
+codelab-container:
+	PURPLELOOP_CONTAINER_TESTS=1 uv run pytest --no-cov tests/phase5/test_codelab_container.py
+	uv run purpleloop codelab-escape --output-dir artifacts/codelab-escape
