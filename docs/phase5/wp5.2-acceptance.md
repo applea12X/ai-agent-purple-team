@@ -207,7 +207,7 @@ then every classification above is a **stand-in-only** classification.
 | Defense dependence classified, every agent defense | Met **for the stand-in rows**: 7 of 7 defenses, 25 of 25 scenarios, 0 unclassified, contrasts Holm-corrected. Not yet with real pins. |
 | Gate isolation | Met (test above). |
 | Judge independence (plan §2.3) | Not applicable to this run: no judge is attached to matrix trials. |
-| 5.1.6 model-driven attacker column | **Skipped.** It depends on WP5.1 (risk approval), which was being built at the same time. |
+| 5.1.6 model-driven attacker column | **Skipped.** WP5.1 was built at the same time and merged (`8d26986`) only after this matrix ran. A model-driven attacker is a different axis from the defense columns. It needs its own signed `proposal-source-change` approval, and its probes are advisory and run after the binding measurements, so they could not have changed any cell here. It was not built. |
 
 ## Tests and suite
 
@@ -225,6 +225,15 @@ then every classification above is a **stand-in-only** classification.
   `standins-ci-subset.draft.json`), exited 0: 45 trials, 0 excluded, **92.6 s against 68 s
   estimated (+36%)**, and `VERIFIED`. On a hostile-heavy three-scenario sample the per-trial
   constant underestimates. The full-corpus run landed within 3%.
+- Full suite, `uv run pytest --junitxml=artifacts/junit-wp5.2.xml`:
+  - At the WP5.2 commits, before any merge: **784 passed, 3 skipped, 91.29% branch coverage,
+    1,455 s**.
+  - After merging phase-5 `80db489`: **890 passed, 3 skipped, 91.57%, 1,345 s**.
+  - After merging phase-5 `8d26986` (final, HEAD `1dca1aa`): **1,084 passed, 4 skipped, 91.99%,
+    1,402 s** (`real 1404.17`). The coverage floor is 85%.
+- `uv run ruff check .`, `uv run ruff format --check .`, and `uv run mypy` are all clean.
+  `phase0.yml`–`phase4.yml` and every earlier test directory are unchanged from `8f000e0`, checked
+  with `git diff`.
 
 ## Defects found in earlier code
 
